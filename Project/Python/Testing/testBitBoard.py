@@ -39,12 +39,15 @@ class Candidate:
     def expand(self, boardState: BitBoardABC):
         match self.__mode:
             case 0:
-                return self.__square3Line4()
+                return self.__square3Line4(boardState)
             
-    def __square3Line4(self):
+    def __square3Line4(self, boardState: BitBoardABC):
         ...
 
-    def __circle34(self, boardState):
+    def __circle34(self, boardState: BitBoardABC):
+        ...
+
+    def __fullBoard(self, boardState: BitBoardABC):
         ...
 
 

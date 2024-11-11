@@ -1,4 +1,52 @@
 import random
+from abc import ABC
+
+
+class BitBoardABC(ABC):
+    @abstractmethod  
+    def hash(self):
+        ...
+
+    @abstractmethod  
+    def addMove(self, move: tuple[int, int], player: int):
+        ...
+
+    @abstractmethod  
+    def getState(self, move: tuple[int, int]) -> int:
+        ...
+
+    @abstractmethod  
+    def isWin(self, move: tuple[int, int]) -> bool:
+        ...
+
+
+class CandidateABC(ABC):
+    @abtractmethod
+    def expand(self, board: BitBoardABC):
+        ...
+
+
+
+class Candidate:
+    def __init__(self, mode=0):
+        """
+        Mode 0 = SQUARE_3_LINE_4
+        Mode 1 = CIRCLE_SQRT_34
+        Mode 2 = FULL_BOARD
+        """
+        self.__mode = mode
+
+    def expand(self, boardState: BitBoardABC):
+        match self.__mode:
+            case 0:
+                return self.__square3Line4()
+            
+    def __square3Line4(self):
+        ...
+
+    def __circle34(self, boardState):
+        ...
+
 
 class BitBoard:
     def __init__(self, size=15):
@@ -28,7 +76,7 @@ class BitBoard:
         elif stateBits == 0b10:
             return 2
         else:
-            return None
+            return 0
     
     def hash(self) -> int:
         """
@@ -47,7 +95,7 @@ class BitBoard:
         1 - Repr for X (Black player)
         2 - Repr for O (White player)
         """
-        if self.getState(move) is not None:
+        if self.getState(move):
             return 
         pos = move[0] * self.__size + move[1]
         self.bitBoard |= player << (pos * 2)
@@ -65,29 +113,44 @@ class BitBoard:
             line.append('  '.join(curLine))
         return '\n'.join(line)
     
-    def is_win(self, player: int) -> bool:
+    def isWin(self, player: int) -> bool:
         directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-        for row in range(self.size):
-            for col in range(self.size):
+        for row in range(self.__size):
+            for col in range(self.__size):
                 if self.getState((row, col)) == player:
                     for dRow, dCol in directions:
                         count = 1
                         r, c = row + dRow, col + dCol
-                        while 0 <= r < self.size and 0 <= c < self.size and self.get_state((r, c)) == player:
+                        while 0 <= r < self.__size and 0 <= c < self.__size and self.getState((r, c)) == player:
                             count += 1
                             r += dRow
                             c += dCol
-                        if count >= 5:
-                            print(f"Player '{player}' has won!")
+                        if count >= 5 and (self.getState((row - dRow, col - dCol)) + 
+                                           self.getState((row + 5 * dRow, col + dCol * 5)) == 0):
                             return True
-        print(f"Player '{player}' has not won.")
         return False
 
-    
+    def getPossibleMoves(self, candidate: CandidateABC):
+        ...
+
+    def __expand(self, candidate: CandidateABC):
+        ...
+
 
 bitBoard = BitBoard(15)
-bitBoard.addMove((7, 12), 1)
+bitBoard.addMove((1, 1), 1)
 print(bitBoard.hash())
-bitBoard.addMove((8, 12), 1)
+bitBoard.addMove((1, 2), 1)
 print(bitBoard.hash())
+bitBoard.addMove((1, 3), 1)
+print(bitBoard.hash())
+bitBoard.addMove((1, 4), 1)
+print(bitBoard.hash())
+bitBoard.addMove((1, 5), 1)
+bitBoard.addMove((2, 6), 1)
+bitBoard.addMove((3, 6), 1)
+bitBoard.addMove((5, 6), 1)
+bitBoard.addMove((4, 6), 1)
+bitBoard.addMove((1, 6), 1)
+print(bitBoard.isWin(1))
 print(bitBoard.view())

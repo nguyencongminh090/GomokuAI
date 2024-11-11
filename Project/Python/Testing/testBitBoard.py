@@ -1,5 +1,5 @@
 import random
-from abc import ABC
+from abc import ABC, abstractmethod
 
 
 class BitBoardABC(ABC):
@@ -21,7 +21,7 @@ class BitBoardABC(ABC):
 
 
 class CandidateABC(ABC):
-    @abtractmethod
+    @abstractmethod
     def expand(self, board: BitBoardABC):
         ...
 
@@ -36,22 +36,31 @@ class Candidate:
         """
         self.__mode = mode
 
-    def expand(self, boardState: BitBoardABC):
+    def expand(self, boardState: BitBoardABC) -> list[int, int]:
         match self.__mode:
             case 0:
+                # Get Available Moves
+                # Search for Candidate Range
+                # Append to list
+                # Remove duplicate or check it during append
                 return self.__square3Line4(boardState)
             
-    def __square3Line4(self, boardState: BitBoardABC):
+    def __square3Line4(self, boardState: BitBoardABC) -> list[int, int]:
+        """
+        Example Output: [(1,1), (1,2), (3,1), ...]
+        NOTE: return Candidate range for 1 move only
+        """
         ...
 
-    def __circle34(self, boardState: BitBoardABC):
+    def __circle34(self, boardState: BitBoardABC) -> list[int, int]:
         ...
 
-    def __fullBoard(self, boardState: BitBoardABC):
+    def __fullBoard(self, boardState: BitBoardABC) -> list[int, int]:
         ...
 
 
 class BitBoard:
+
     def __init__(self, size=15):
         self.__size         = size        
         self.__zobristTable = self.__generateZobristTable()

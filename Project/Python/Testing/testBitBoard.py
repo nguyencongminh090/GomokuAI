@@ -6,7 +6,7 @@ def checkValid(size: int, move: list[int, int]) -> bool:
         """
         Return True if move in range
         """
-        return (size - 1) >= move[0] >= 0 and (size - 1) >= move[1] >= 0
+        return ((size - 1) >= move[0] >= 0) and ((size - 1) >= move[1] >= 0)
 
 
 class BitBoardABC(ABC):
@@ -76,14 +76,14 @@ class Candidate:
         for k in range(1, ln + 1):
             for i, j in direction:
                 coord = (x + i * k, y + j * k)
-                if not boardState.getState(coord):
+                if boardState.getState(coord) == 0:
                     boardState.addMove(coord, 3)
 
         for i in range(1, sq + 1):
             for j in range(1, sq + 1):
                 coords = [(x + i, y + j), (x + i, y - j), (x - i, y + j), (x - i, y - j)]
                 for coord in coords:                    
-                    if not boardState.getState(coord):
+                    if boardState.getState(coord) == 0:
                         boardState.addMove(coord, 3)
 
 
@@ -117,7 +117,7 @@ class BitBoard:
     
     def getState(self, move: tuple[int, int]) -> int:
         if not checkValid(self.__size, move):
-            return 0
+            return -1
 
         pos       = move[0] * self.__size + move[1]
         mask      = 0b11 << (pos * 2)
@@ -193,7 +193,7 @@ class BitBoard:
         return False
 
     def getPossibleMoves(self, candidate: CandidateABC):
-        candidate.expand(self)
+        return candidate.expand(self)
 
     def debugDisplayBitBoard(self):
         print("BitBoard (Binary Representation):")
@@ -210,7 +210,9 @@ class BitBoard:
 
 bitBoard = BitBoard(15)
 candidate = Candidate(0, 15)
-bitBoard.addMove((7, 0), 1)
-bitBoard.getPossibleMoves(candidate)
+bitBoard.addMove((7, 2), 1)
+bitBoard.addMove((12,4), 1)
+bitBoard.addMove((4, 7), 2)
+print(bitBoard.getPossibleMoves(candidate))
 print(bitBoard.isWin(1))
 print(bitBoard.view())

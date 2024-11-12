@@ -217,6 +217,7 @@ class BitBoard:
 
 
 class Evaluator:
+    # Read document
     ...
 
 class TreeNode:
@@ -231,11 +232,31 @@ class TreeNode:
   
 class Search:
     # Transposition Table: Depth, Score, Priority
+    # TODO: 
+    # + Quiescence Search: VCF, VCT {Threat Search}
+    # + Update Tree
+    # [+] Use Tree to compare variants (children)
+    # + TTEntry, Transposition Table
     TRANSPOSITION_TABLE = {}
     def __init__(self):
         self.__evaluator = Evaluator()
 
-    def alphabeta(depth, alpha, beta, maximizePlayer):
+    def alphabeta(self, depth, alpha, beta, maximizePlayer):
+        ...
+
+    def PVS_Search(self, depth, score):
+        ...
+
+    def VCF_Search(self, depth, score):
+        ...
+
+    def VCT_Search(self, depth, score):
+        ...
+
+    def attackSearch(self, depth, pattern, score):
+        ...
+
+    def defendSearch(self, depth, score):
         ...
 
 

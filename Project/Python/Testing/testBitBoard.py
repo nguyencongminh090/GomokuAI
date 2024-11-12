@@ -44,12 +44,7 @@ class Candidate:
         self.__mode = mode
         self.__size = size
 
-    def expand(self, boardState: BitBoardABC) -> list[int, int]:
-        # Iterate Through Board
-        # Check Available Move
-        # Do candidate search -> Mark with bit 11 (3)
-        # Check BitBoard -> Add marked position to candidate list
-        
+    def expand(self, boardState: BitBoardABC) -> list[int, int]:        
         candidate = []
         for row in range(self.__size):
             for col in range(self.__size):

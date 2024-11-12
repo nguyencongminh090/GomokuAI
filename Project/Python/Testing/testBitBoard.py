@@ -2,6 +2,13 @@ import random
 from abc import ABC, abstractmethod
 
 
+def checkValid(size: int, move: list[int, int]) -> bool:
+        """
+        Return True if move in range
+        """
+        return (size - 1) >= move[0] >= 0 and (size - 1) >= move[1] >= 0
+
+
 class BitBoardABC(ABC):
     @abstractmethod  
     def hash(self):
@@ -28,29 +35,59 @@ class CandidateABC(ABC):
 
 
 class Candidate:
-    def __init__(self, mode=0):
+    def __init__(self, mode=0, size=15):
         """
         Mode 0 = SQUARE_3_LINE_4
         Mode 1 = CIRCLE_SQRT_34
         Mode 2 = FULL_BOARD
         """
         self.__mode = mode
+        self.__size = size
 
     def expand(self, boardState: BitBoardABC) -> list[int, int]:
-        match self.__mode:
-            case 0:
-                # Get Available Moves
-                # Search for Candidate Range
-                # Append to list
-                # Remove duplicate or check it during append
-                return self.__square3Line4(boardState)
+        # Get Available Moves
+        # Search for Candidate Range
+        # Append to list
+        # Remove duplicate or check it during append
+        candidate = []
+        for row in range(self.__size):
+            for col in range(self.__size):
+                state = boardState.getState((row, col))
+                if state in (0b01, 0b10):
+                    match self.__mode:
+                        case 0:
+                            self.__squareLine(boardState, row, col, 3, 4)
+                        case _:
+                            print('Not supported')
+
+        for row in range(self.__size):
+            for col in range(self.__size):
+                if boardState.getState((row, col)) == 0b11:
+                    candidate.append((row, col))
+
+        return candidate
             
-    def __square3Line4(self, boardState: BitBoardABC) -> list[int, int]:
+    def __squareLine(self, boardState: BitBoardABC, x: int, y: int, sq: int, ln: int):
         """
         Example Output: [(1,1), (1,2), (3,1), ...]
         NOTE: return Candidate range for 1 move only
         """
-        ...
+        direction = ((1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1))
+        for k in range(1, ln + 1):
+            for i, j in direction:
+                coord = (x + i * k, y + j * k)
+                if not boardState.getState(coord):
+                    boardState.addMove(coord, 3)
+
+        for i in range(1, sq + 1):
+            for j in range(1, sq + 1):
+                coords = [(x + i, y + j), (x + i, y - j), (x - i, y + j), (x - i, y - j)]
+                for coord in coords:                    
+                    if not boardState.getState(coord):
+                        boardState.addMove(coord, 3)
+
+
+        
 
     def __circle34(self, boardState: BitBoardABC) -> list[int, int]:
         ...
@@ -79,6 +116,9 @@ class BitBoard:
         return table
     
     def getState(self, move: tuple[int, int]) -> int:
+        if not checkValid(self.__size, move):
+            return 0
+
         pos       = move[0] * self.__size + move[1]
         mask      = 0b11 << (pos * 2)
         stateBits = (self.bitBoard & mask) >> (pos * 2)
@@ -87,6 +127,8 @@ class BitBoard:
             return 1
         elif stateBits == 0b10:
             return 2
+        elif stateBits == 0b11:
+            return 3
         else:
             return 0
     
@@ -106,6 +148,7 @@ class BitBoard:
         """
         1 - Repr for X (Black player)
         2 - Repr for O (White player)
+        3 - Repr for M (Marked)
         """
         if self.getState(move):
             return 
@@ -119,7 +162,14 @@ class BitBoard:
             for y in range(self.__size):
                 state = self.getState((x, y))
                 if state:
-                    curLine.append('X' if state == 1 else "O")
+                    match state:
+                        case 1:
+                            curLine.append('X')
+                        case 2:
+                            curLine.append('O')
+                        case 3: 
+                            # Debug Candidate
+                            curLine.append('*')
                 else:
                     curLine.append('.')
             line.append('  '.join(curLine))
@@ -143,26 +193,25 @@ class BitBoard:
         return False
 
     def getPossibleMoves(self, candidate: CandidateABC):
-        ...
+        candidate.expand(self)
 
-    def __expand(self, candidate: CandidateABC):
-        ...
+    def debug_display_bitBoard(self):
+        # Hiển thị bitboard dưới dạng nhị phân để debug
+        print("BitBoard (Binary Representation):")
+        for i in range(self.__size):
+            row_bits = ""
+            for j in range(self.__size):
+                pos = i * self.__size + j
+                mask = 0b11 << (pos * 2)
+                state_bits = (self.bitBoard & mask) >> (pos * 2)
+                row_bits += f"{state_bits:02b} "
+            print(row_bits)
+        print()
 
 
 bitBoard = BitBoard(15)
-bitBoard.addMove((1, 1), 1)
-print(bitBoard.hash())
-bitBoard.addMove((1, 2), 1)
-print(bitBoard.hash())
-bitBoard.addMove((1, 3), 1)
-print(bitBoard.hash())
-bitBoard.addMove((1, 4), 1)
-print(bitBoard.hash())
-bitBoard.addMove((1, 5), 1)
-bitBoard.addMove((2, 6), 1)
-bitBoard.addMove((3, 6), 1)
-bitBoard.addMove((5, 6), 1)
-bitBoard.addMove((4, 6), 1)
-bitBoard.addMove((1, 6), 1)
+candidate = Candidate(0, 15)
+bitBoard.addMove((7, 0), 1)
+bitBoard.getPossibleMoves(candidate)
 print(bitBoard.isWin(1))
 print(bitBoard.view())

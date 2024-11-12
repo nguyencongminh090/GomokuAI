@@ -34,7 +34,7 @@ class CandidateABC(ABC):
 
 
 
-class Candidate:
+class Candidate:  
     def __init__(self, mode=0, size=15):
         """
         Mode 0 = SQUARE_3_LINE_4
@@ -216,6 +216,30 @@ class BitBoard:
         print()
 
 
+class Evaluator:
+    ...
+
+class TreeNode:
+    def __init__(self, root: bool, boardState: BitBoardABC, depth: int, score: int, hash: int, priority: int=0):
+        self.root:       bool           = root
+        self.boardState: BitBoardABC    = boardState
+        self.depth:      int            = depth
+        self.score:      int            = score
+        self.hash :      int            = hash
+        self.priority:   int            = priority
+        self.child:      list[TreeNode] = []
+  
+class Search:
+    # Transposition Table: Depth, Score, Priority
+    TRANSPOSITION_TABLE = {}
+    def __init__(self):
+        self.__evaluator = Evaluator()
+
+    def alphabeta(depth, alpha, beta, maximizePlayer):
+        ...
+
+
+# TEST
 bitBoard = BitBoard(15)
 candidate = Candidate(1, 15)
 bitBoard.addMove((7, 2), 1)
@@ -223,4 +247,4 @@ bitBoard.addMove((12,4), 1)
 bitBoard.addMove((4, 7), 2)
 print(bitBoard.getPossibleMoves(candidate))
 print(bitBoard.isWin(1))
-print(bitBoard.view())
+print(bitBoard.view()) 

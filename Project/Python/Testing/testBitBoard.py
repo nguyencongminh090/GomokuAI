@@ -45,10 +45,11 @@ class Candidate:
         self.__size = size
 
     def expand(self, boardState: BitBoardABC) -> list[int, int]:
-        # Get Available Moves
-        # Search for Candidate Range
-        # Append to list
-        # Remove duplicate or check it during append
+        # Iterate Through Board
+        # Check Available Move
+        # Do candidate search -> Mark with bit 11 (3)
+        # Check BitBoard -> Add marked position to candidate list
+        
         candidate = []
         for row in range(self.__size):
             for col in range(self.__size):

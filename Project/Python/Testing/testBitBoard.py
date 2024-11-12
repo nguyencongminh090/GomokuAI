@@ -57,6 +57,8 @@ class Candidate:
                     match self.__mode:
                         case 0:
                             self.__squareLine(boardState, row, col, 3, 4)
+                        case 2:
+                            self.__fullBoard(boardState)
                         case _:
                             print('Not supported')
 
@@ -84,18 +86,18 @@ class Candidate:
                 coords = [(x + i, y + j), (x + i, y - j), (x - i, y + j), (x - i, y - j)]
                 for coord in coords:                    
                     if boardState.getState(coord) == 0:
-                        boardState.addMove(coord, 3)
+                        boardState.addMove(coord, 3)        
 
-
-        
-
-    def __circle34(self, boardState: BitBoardABC) -> list[int, int]:
+    def __circle34(self, boardState: BitBoardABC):
         def distance(pointA: tuple[int, int], pointB: tuple[int, int]) -> int:
-            return ((pointB[0] - pointA[0]) ** 2 + (pointB[1] - pointA[1]) ** 2) ** 0.5 
+            return ((pointB[0] - pointA[0]) ** 2 + (pointB[1] - pointA[1]) ** 2) ** 0.5
 
-    def __fullBoard(self, boardState: BitBoardABC) -> list[int, int]:
-        ...
-
+    def __fullBoard(self, boardState: BitBoardABC):
+        for row in range(self.__size):
+            for col in range(self.__size):
+                if not boardState.getState((row, col)):
+                    boardState.addMove((row, col), 3)
+                
 
 class BitBoard:
 
@@ -210,7 +212,7 @@ class BitBoard:
 
 
 bitBoard = BitBoard(15)
-candidate = Candidate(0, 15)
+candidate = Candidate(2, 15)
 bitBoard.addMove((7, 2), 1)
 bitBoard.addMove((12,4), 1)
 bitBoard.addMove((4, 7), 2)

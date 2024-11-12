@@ -29,7 +29,7 @@ class BitBoardABC(ABC):
 
 class CandidateABC(ABC):
     @abstractmethod
-    def expand(self, board: BitBoardABC):
+    def expand(self, board: BitBoardABC) -> list[int, int]:
         ...
 
 
@@ -90,7 +90,8 @@ class Candidate:
         
 
     def __circle34(self, boardState: BitBoardABC) -> list[int, int]:
-        ...
+        def distance(pointA: tuple[int, int], pointB: tuple[int, int]) -> int:
+            return ((pointB[0] - pointA[0]) ** 2 + (pointB[1] - pointA[1]) ** 2) ** 0.5 
 
     def __fullBoard(self, boardState: BitBoardABC) -> list[int, int]:
         ...

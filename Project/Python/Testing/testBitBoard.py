@@ -195,8 +195,7 @@ class BitBoard:
     def getPossibleMoves(self, candidate: CandidateABC):
         candidate.expand(self)
 
-    def debug_display_bitBoard(self):
-        # Hiển thị bitboard dưới dạng nhị phân để debug
+    def debugDisplayBitBoard(self):
         print("BitBoard (Binary Representation):")
         for i in range(self.__size):
             row_bits = ""

@@ -24,6 +24,7 @@ def main():
         ((6, 5), Color.WHITE.value),   # White
         ((6, 7), Color.BLACK.value),   # Black
         ((5, 7), Color.WHITE.value),   # White
+        ((6, 9), Color.BLACK.value),
         # Uncomment the next line to add another move
         # ((5, 9), Color.BLACK.value),  # Black
         # ((8, 8), Color.BLACK.value),

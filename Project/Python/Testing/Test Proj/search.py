@@ -4,8 +4,9 @@ from typing import List, Tuple, Dict, Optional
 from board import BitBoard
 from pattern import PatternDetector
 from evaluator import Evaluator
-from candidate import Candidate, CandidateABC
+from candidate import Candidate
 from enums import Color, Pattern
+from interfaces import BitBoardABC
 import time
 
 class TreeNode:
@@ -159,6 +160,29 @@ class Search:
         self.transpositionTable[node.hashVal] = (depth, value)
 
         return value
+    
+    @staticmethod
+    def get_adjacent_cells(move: Tuple[int, int], radius: int = 1) -> List[Tuple[int, int]]:
+        """
+        Retrieves all cells within a specified radius around a move.
+
+        Args:
+            move (Tuple[int, int]): The move position (row, column).
+            size (int): The size of the board.
+            radius (int, optional): The radius to search around the move. Defaults to 2.
+
+        Returns:
+            List[Tuple[int, int]]: A list of cell positions within the radius.
+        """
+        adjacent_cells = []
+        x, y = move
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                if dx == 0 and dy == 0:
+                    continue  # Skip the move itself
+                new_x, new_y = x + dx, y + dy
+                adjacent_cells.append((new_x, new_y))
+        return adjacent_cells
 
     def filter_useful_moves(self, node: TreeNode, possible_moves: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
         """
@@ -173,6 +197,21 @@ class Search:
             List[Tuple[int, int]]: A list of useful moves that either advance the AI's position
                                     or block the opponent's threats.
         """
+        def checkOppo(board: BitBoardABC, move: Tuple[int, int]):            
+            curSide = board.get_current_side()
+            check_moves_around = self.get_adjacent_cells(move)
+            patterns_opponent = []
+            for move in check_moves_around:
+                copied_board = board.copy()
+                copied_board.add_move(move, curSide.value)
+                pattern = self.patternDetector.evaluate_move_patterns(
+                    board=copied_board,
+                    move=move,
+                    side=curSide
+                )
+                patterns_opponent.extend(pattern)
+            return patterns_opponent                                
+
         useful_moves = []
 
         # Define useful patterns for the AI and the opponent
@@ -188,13 +227,9 @@ class Search:
         }
 
         useful_patterns_opponent = {
-            Pattern.B4, # Block four in a row
-            Pattern.B3, # Block three in a row
-            Pattern.B2, # Block two in a row
-            Pattern.B1  # Block one in a row
+            Pattern.B4,
         }
         curSide = node.boardState.get_current_side()
-        print('CurSide:', curSide)
         for move in possible_moves:
             # Simulate the move on a copy of the board
             child_board = node.boardState.copy()
@@ -210,16 +245,13 @@ class Search:
             )
 
             # Detect patterns that the AI's move blocks for the opponent
-            patterns_opponent = self.patternDetector.evaluate_move_patterns(
-                board=child_board,
-                move=move,
-                side=self.get_opponent_side(curSide)
-            )
+            patterns_opponent = checkOppo(child_board, move)
 
             # Check if any useful pattern for the AI is present
             has_useful_pattern_self = any(
                 pattern in useful_patterns_self for pattern in patterns_ai
             )
+            
 
             # Check if the move blocks any useful pattern for the opponent
             blocks_opponent_pattern = any(
@@ -229,11 +261,11 @@ class Search:
             # If the move is useful for the AI or blocks the opponent, keep it
             if has_useful_pattern_self or blocks_opponent_pattern:
                 useful_moves.append(move)
-                print(patterns_ai)
-                print(patterns_opponent)
-                print('Move:', move)
-                print(child_board.view())
-                input()
+                # print(patterns_ai)
+                # print(patterns_opponent)
+                # print('Move:', move)
+                # print(child_board.view())
+                # input()
 
         # print(f'Drop: {len(possible_moves)} -> {len(useful_moves)}')
 
@@ -241,8 +273,8 @@ class Search:
         for move in useful_moves:
             child_board.add_move(move, 3)
         
-        print(child_board.view())
-        input()
+        # print(child_board.view())
+        # input()
         return useful_moves
 
     def find_best_move(self, node: TreeNode, depth: int, current_side: Color) -> Optional[Tuple[int, int]]:

@@ -1,55 +1,54 @@
-# test_evaluator.py
+# test_pattern.py
 
-from evaluator import Evaluator
-from enums import Pattern, Color
+import unittest
+from enums import Color, ColorFlag, Pattern
+from board import BitBoard
+from pattern import PatternDetector
 from typing import List, Tuple
 
-def generate_patterns(score: int) -> List[Pattern]:
-    # Simplistic pattern generation based on score for testing
-    patterns = []
-    remaining = score
-    if remaining >= 100000:
-        patterns.append(Pattern.F5)
-        remaining -= 100000
-    if remaining >= 10000:
-        patterns.append(Pattern.F4)
-        remaining -= 10000
-    if remaining >= 5000:
-        patterns.append(Pattern.B4)
-        remaining -= 5000
-    if remaining >= 1000:
-        patterns.append(Pattern.F3S)
-        remaining -= 1000
-    if remaining >= 500:
-        patterns.append(Pattern.B3)
-        remaining -= 500
-    if remaining >= 100:
-        patterns.append(Pattern.F3)
-        remaining -= 100
-    if remaining >= 50:
-        patterns.append(Pattern.B2)
-        remaining -= 50
-    if remaining >= 10:
-        patterns.append(Pattern.F2B)
-        remaining -= 10
-    if remaining >= 5:
-        patterns.append(Pattern.F2A)
-        remaining -= 5
-    if remaining >= 2:
-        patterns.append(Pattern.F2)
-        remaining -= 2
-    return patterns
+class TestPatternDetector(unittest.TestCase):
+    def setUp(self):
+        """
+        Initialize the board and PatternDetector before each test.
+        """
+        self.board = BitBoard(size=15)
+        self.pattern_detector = PatternDetector(rule='STANDARD')
+        self.ai_color = Color.BLACK
+        self.opponent_color = Color.WHITE
 
-def main():
-    max_score = 100000
-    evaluator = Evaluator(max_score=max_score, desired_win_rate=0.99, scaling_factor=20000)
-    
-    test_scores = [0, 500, 2500, 5000, 7500, 10000, 25000, 50000, 75000, 100000]
-    
-    for score in test_scores:
-        patterns = generate_patterns(score)
-        win_rate = evaluator.evaluate(patterns, Color.BLACK)
-        print(f"Score: {score}, Win Rate: {win_rate * 100:.2f}%")
+    def test_pattern_xxx_o___o(self):
+        """
+        Test the pattern:
+        x x x _ o _ _ _ o
+        This represents a horizontal line with:
+        - AI (Black) having three in a row.
+        - Opponent (White) having stones interrupting potential connections.
+        """
+        # Define the row where the pattern will be placed
+        row = 7  # Center row for visualization
+        # Define the starting column
+        start_col = 4
 
-if __name__ == "__main__":
-    main()
+        # Place AI's stones: x x x
+        # self.board.add_move((row, start_col), self.ai_color.value)
+        # self.board.add_move((row, start_col + 1), self.ai_color.value)
+        # self.board.add_move((row, start_col + 2), self.ai_color.value)
+        
+        # Place Opponent's stones: o ... o
+        self.board.add_move((row, start_col + 4), self.opponent_color.value)
+        self.board.add_move((row, start_col + 8), self.opponent_color.value)
+
+        pattern = PatternDetector('STANDARD')._evaluate_patterns(self.board, (row, start_col + 4), self.opponent_color)
+
+        # Display the board
+        print("Board Setup:")
+        print(self.board.view())
+
+        # The pattern to test is: x x x _ o _ _ _ o
+        # Since PatternDetector evaluates lines passing through a specific move,
+        # we'll evaluate patterns for each of AI's stones
+
+        
+
+if __name__ == '__main__':
+    unittest.main()

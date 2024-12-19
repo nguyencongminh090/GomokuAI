@@ -159,7 +159,6 @@ class PatternDetector:
                     line.append(ColorFlag.OPPO)
             else:
                 line.append(ColorFlag.OPPO)  # Treat out-of-bounds as opponent
-
         return line
 
     def _evaluate_patterns(self, board: BitBoard, move: Tuple[int, int], side: Color) -> List[Pattern]:

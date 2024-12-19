@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Tuple
+from enums import Color
 
 class BitBoardABC(ABC):
     @abstractmethod
@@ -27,9 +28,17 @@ class BitBoardABC(ABC):
     @abstractmethod
     def size(self) -> int:
         pass
+    
+    @abstractmethod
+    def get_current_side(self) -> Color:
+        pass
 
     @abstractmethod
     def get_possible_moves(self, candidate: 'CandidateABC') -> List[Tuple[int, int]]:
+        pass
+
+    @abstractmethod
+    def copy(self) -> 'BitBoardABC':
         pass
 
 class CandidateABC(ABC):

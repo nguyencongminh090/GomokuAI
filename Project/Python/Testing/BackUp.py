@@ -1,6 +1,5 @@
 import random
 from abc import ABC, abstractmethod
-from enum import Enum
 
 
 def checkValid(size: int, move: list[int, int]) -> bool:
@@ -32,6 +31,7 @@ class CandidateABC(ABC):
     @abstractmethod
     def expand(self, board: BitBoardABC) -> list[int, int]:
         ...
+
 
 
 class Candidate:  
@@ -216,27 +216,6 @@ class BitBoard:
         print()
 
 
-class Pattern(Enum):
-    DEAD = 0
-    OL   = 1
-    B1   = 2
-    F1   = 3
-    B2   = 4
-    F2   = 5
-    F2A  = 6
-    F2B  = 7
-    B3   = 8
-    F3   = 9
-    F3S  = 10
-    B4   = 11
-    F4   = 12
-    F5   = 13
-    PATTERN_NB = 14
-
-class PatternDectector:
-    ...
-
-
 class Evaluator:
     # Read document
     ...
@@ -287,13 +266,6 @@ class Search:
 # TEST
 bitBoard = BitBoard(15)
 bitBoard.addMove((7, 7), 1)
-bitBoard.addMove((7, 6), 2)
-bitBoard.addMove((6, 6), 1)
-bitBoard.addMove((5, 5), 2)
-bitBoard.addMove((6, 8), 1)
-bitBoard.addMove((6, 5), 2)
-bitBoard.addMove((6, 7), 1)
-bitBoard.addMove((5, 7), 2)
-bitBoard.addMove((5, 9), 1)
+bitBoard.addMove((7, 8), 2)
 print(bitBoard.view()) 
 print(bitBoard.debugDisplayBitBoard())

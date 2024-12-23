@@ -24,11 +24,14 @@ def main():
         ((6, 5), Color.WHITE.value),   # White
         ((6, 7), Color.BLACK.value),   # Black
         ((5, 7), Color.WHITE.value),   # White
-        ((6, 9), Color.BLACK.value),
+        # ((6, 9), Color.BLACK.value),
+        # ((3, 5), Color.WHITE.value),
+        ((6, 10), Color.BLACK.value),
         # Uncomment the next line to add another move
         # ((5, 9), Color.BLACK.value),  # Black
         # ((8, 8), Color.BLACK.value),
         # ((5, 6), Color.WHITE.value),
+        ((6, 9), Color.WHITE.value)
     ]
 
     # Apply the moves to the board
@@ -53,12 +56,13 @@ def main():
         return
 
     # Evaluate patterns based on the last move and its side
-    patterns = patternDetector.evaluate_patterns(board=bitBoard, side=last_side)
-    for p in patterns:
-        print(f"- {p}")
+    # patterns = patternDetector.evaluate_patterns(board=bitBoard, side=last_side)
+    # for p in patterns:
+    #     print(f"- {p}")
     # print('Score:', score)
 
     # Initialize Search without a fixed player side
+    print(f'Search [{bitBoard.get_current_side()}]')
     searchEngine = Search(bitBoard.get_current_side())
 
     # Create the root node for the search tree

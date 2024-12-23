@@ -145,6 +145,9 @@ class PatternDetector:
         size = board.size
         x, y = move
         line = []
+        
+        # if board.get_state((x + dRow * (- 5), y + dCol * (-5))) or board.get_state((x + dRow * 5, y + dCol * 5)):
+        #     return line
 
         for i in range(-4, 5):
             r = x + dRow * i

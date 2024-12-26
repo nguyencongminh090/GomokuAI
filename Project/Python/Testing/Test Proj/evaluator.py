@@ -17,7 +17,9 @@ class Evaluator:
         # Define weights for different patterns
         self.pattern_weights = {
             Pattern.F5: 100000,
-            Pattern.OL: -1000,          # Overline treated similar to Five in a Row | Fix later | In standard (exactly 5 is win), so OL mean miss a position
+            Pattern.OL: -1000, 
+            Pattern.OLR: -100000,
+            Pattern.OLF: 100000,
             Pattern.F4: 10000,
             Pattern.B4: 5000,
             Pattern.F3S: 1000,
@@ -29,7 +31,7 @@ class Evaluator:
             Pattern.B2: 200,
             Pattern.B1: 100,
             Pattern.F1: 50,
-            Pattern.DEAD: 0
+            Pattern.DEAD: 0,
             # Add more patterns and their corresponding weights as needed
         }
 
@@ -51,5 +53,12 @@ class Evaluator:
                     score += self.pattern_weights[pattern]
                 else:
                     score -= self.pattern_weights[pattern]
+        return score
+    
+    def static_evaluator(self, patterns: List[Tuple[Pattern, Color]], ai_color: Color) -> float:
+        score = 0.0
+        for pattern in patterns:
+            if pattern in self.pattern_weights:
+                score += self.pattern_weights[pattern]
         return score
 

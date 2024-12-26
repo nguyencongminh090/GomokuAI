@@ -27,3 +27,5 @@ class Pattern(Enum):
     F4 = 12
     F5 = 13
     PATTERN_NB = 14
+    OLR = 15
+    OLF = 16

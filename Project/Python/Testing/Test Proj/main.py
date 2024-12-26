@@ -24,14 +24,15 @@ def main():
         ((6, 5), Color.WHITE.value),   # White
         ((6, 7), Color.BLACK.value),   # Black
         ((5, 7), Color.WHITE.value),   # White
+        ((14, 14), Color.BLACK.value),
         # ((6, 9), Color.BLACK.value),
         # ((3, 5), Color.WHITE.value),
-        ((6, 10), Color.BLACK.value),
+        # ((6, 10), Color.BLACK.value),
         # Uncomment the next line to add another move
         # ((5, 9), Color.BLACK.value),  # Black
         # ((8, 8), Color.BLACK.value),
         # ((5, 6), Color.WHITE.value),
-        ((6, 9), Color.WHITE.value)
+        # ((6, 9), Color.WHITE.value)
     ]
 
     # Apply the moves to the board
@@ -67,7 +68,8 @@ def main():
 
     # Create the root node for the search tree
     root_hash = bitBoard.hash()
-    rootNode = TreeNode(root=True, boardState=bitBoard, depth=1, score=0, hashVal=root_hash)
+    # rootNode = TreeNode(root=True, boardState=bitBoard, depth=1, score=0, hashVal=root_hash)
+    rootNode = TreeNode(board_state=bitBoard, hash_val=root_hash)
 
     # Determine the current side to move
     current_side = bitBoard.get_current_side()
@@ -83,7 +85,7 @@ def main():
     # )
     bestScore = searchEngine.find_best_move(
         node=rootNode,
-        depth=3,
+        depth=4,
         current_side=current_side
     )
     print("\nBest Score from Alpha-Beta Search:", bestScore)

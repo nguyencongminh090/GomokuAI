@@ -79,8 +79,10 @@ class PatternDetector:
         realLen, fullLen, start, end = PatternDetector.count_line(line)
         pattern = Pattern.DEAD
 
-        if rule in ['STANDARD', 'RENJU'] and realLen >= 6:
+        if rule == 'STANDARD' and realLen >= 6:
             return Pattern.OL
+        elif rule == 'RENJU' and realLen >= 6:
+            return Pattern.OLR
         elif realLen >= 5:
             return Pattern.F5
         elif fullLen < 5:
@@ -103,7 +105,7 @@ class PatternDetector:
                 pattern = Pattern.F4
                 if rule == 'RENJU' and side == Color.BLACK:
                     if len(f5_indices) >= 2 and (f5_indices[1] - f5_indices[0] < 5):
-                        pattern = Pattern.OL
+                        pattern = Pattern.OLR
             elif pattern_counts[Pattern.F5] == 1:
                 pattern = Pattern.B4
             elif pattern_counts[Pattern.F4] >= 2:

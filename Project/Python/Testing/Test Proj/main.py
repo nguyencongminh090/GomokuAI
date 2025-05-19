@@ -78,7 +78,7 @@ def main():
     # Perform Alpha-Beta Search
     # bestScore = searchEngine.alphabeta(
     #     node=rootNode,
-    #     depth=3,
+    #     depth=4,
     #     alpha=-float('inf'),
     #     beta=float('inf'),
     #     current_side=current_side

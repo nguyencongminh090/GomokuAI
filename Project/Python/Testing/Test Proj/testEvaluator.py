@@ -1,54 +1,51 @@
-# test_pattern.py
+# parallel_test.py
 
-import unittest
-from enums import Color, ColorFlag, Pattern
-from board import BitBoard
-from pattern import PatternDetector
-from typing import List, Tuple
+import time
+from concurrent.futures import ProcessPoolExecutor
 
-class TestPatternDetector(unittest.TestCase):
-    def setUp(self):
-        """
-        Initialize the board and PatternDetector before each test.
-        """
-        self.board = BitBoard(size=15)
-        self.pattern_detector = PatternDetector(rule='STANDARD')
-        self.ai_color = Color.BLACK
-        self.opponent_color = Color.WHITE
+def cpu_bound_task(n):
+    """A CPU-bound task that performs a large number of computations."""
+    total = 0
+    for i in range(1, 1000000):
+        total += i * i
+    return total + n
 
-    def test_pattern_xxx_o___o(self):
-        """
-        Test the pattern:
-        x x x _ o _ _ _ o
-        This represents a horizontal line with:
-        - AI (Black) having three in a row.
-        - Opponent (White) having stones interrupting potential connections.
-        """
-        # Define the row where the pattern will be placed
-        row = 7  # Center row for visualization
-        # Define the starting column
-        start_col = 4
+def serial_execution(tasks):
+    """Execute tasks serially."""
+    results = []
+    start_time = time.time()
+    for task in tasks:
+        result = cpu_bound_task(task)
+        results.append(result)
+    end_time = time.time()
+    serial_time = end_time - start_time
+    return results, serial_time
 
-        # Place AI's stones: x x x
-        # self.board.add_move((row, start_col), self.ai_color.value)
-        # self.board.add_move((row, start_col + 1), self.ai_color.value)
-        # self.board.add_move((row, start_col + 2), self.ai_color.value)
-        
-        # Place Opponent's stones: o ... o
-        self.board.add_move((row, start_col + 4), self.opponent_color.value)
-        self.board.add_move((row, start_col + 8), self.opponent_color.value)
+def parallel_execution(tasks, max_workers=4):
+    """Execute tasks in parallel using ProcessPoolExecutor."""
+    start_time = time.time()
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Use executor.map to maintain the order of results
+        results = list(executor.map(cpu_bound_task, tasks))
+    end_time = time.time()
+    parallel_time = end_time - start_time
+    return results, parallel_time
 
-        pattern = PatternDetector('STANDARD')._evaluate_patterns(self.board, (row, start_col + 4), self.opponent_color)
+if __name__ == "__main__":
+    # Define a list of tasks (inputs)
+    tasks = [i for i in range(1000)]  # Adjust the range for more or fewer tasks
 
-        # Display the board
-        print("Board Setup:")
-        print(self.board.view())
+    # Serial Execution
+    serial_results, serial_duration = serial_execution(tasks)
+    print(f"Serial Execution Time: {serial_duration:.2f} seconds")
 
-        # The pattern to test is: x x x _ o _ _ _ o
-        # Since PatternDetector evaluates lines passing through a specific move,
-        # we'll evaluate patterns for each of AI's stones
+    # Parallel Execution
+    parallel_results, parallel_duration = parallel_execution(tasks, max_workers=4)
+    print(f"Parallel Execution Time: {parallel_duration:.2f} seconds")
 
-        
+    # Verify that both methods produce the same results
+    assert serial_results == parallel_results, "Mismatch between serial and parallel results!"
 
-if __name__ == '__main__':
-    unittest.main()
+    # Calculate and display the speedup
+    speedup = serial_duration / parallel_duration
+    print(f"Speedup: {speedup:.2f}x faster using parallel execution")

@@ -8,6 +8,7 @@ from candidate import Candidate
 from enums import Color, Pattern
 from interfaces import BitBoardABC
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class TreeNode:
     def __init__(
@@ -93,34 +94,6 @@ class Search:
                 if alpha >= beta:
                     break
 
-        # for move in possible_moves:
-        #     child_board = node.board_state.copy()
-        #     if not child_board.add_move(move, current_side.value):
-        #         continue
-        #     child_hash = child_board.hash()
-
-        #     if child_hash in self.transposition_table:
-        #         child_score = self.transposition_table[child_hash][1]
-        #     else:
-        #         child_node = TreeNode(child_board, child_hash, parent=node, best_move=move)
-        #         # node.add_child(child_node)
-        #         child_score = self.alphabeta(child_node, depth - 1, alpha, beta, opponent_side)
-
-        #     if is_maximizing:
-        #         if child_score > value:
-        #             value = child_score
-        #             node.best_move = move
-        #         alpha = max(alpha, value)
-        #         if alpha >= beta:
-        #             break
-        #     else:
-        #         if child_score < value:
-        #             value = child_score
-        #             node.best_move = move
-        #         beta = min(beta, value)
-        #         if alpha >= beta:
-        #             break
-
         node.score = value
         self.transposition_table[node.hash_val] = (depth, value)
         return value
@@ -128,9 +101,8 @@ class Search:
     def sort_priority(self, node: TreeNode, possible_moves: List[Tuple[int, int]], current_side: Color) -> List[TreeNode]:
         prioritized_nodes = []
         sum_score = 0
-        idx = 0
         for move in possible_moves:
-            child_board = node.board_state.copy()  # Assuming BitBoard has copy_from method
+            child_board = node.board_state.copy()
             if not child_board.add_move(move, current_side.value):
                 continue
             patterns = self.pattern_detector.evaluate_move_patterns(child_board, move, current_side)
@@ -142,51 +114,50 @@ class Search:
             prioritized_nodes.append(child_node)
         
         prioritized_nodes.sort(key=lambda node: node.priority, reverse=True)
+        if not prioritized_nodes:
+            return prioritized_nodes
         avg_thresh = sum_score / len(prioritized_nodes)
-        while True:
-            if prioritized_nodes[idx].priority < avg_thresh:
-                prioritized_nodes = prioritized_nodes[:idx - 1]
-                return prioritized_nodes
+        idx = 0
+        while idx < len(prioritized_nodes) and prioritized_nodes[idx].priority >= avg_thresh:
             idx += 1
-        
+        return prioritized_nodes[:idx]
+
     def check_immediate_win(self, node: TreeNode, current_side: Color) -> Optional[Tuple[int, int]]:
-        for child_node in node:
+        for child_node in node.children:
             if child_node.board_state.is_win(current_side.value):
-                return node.best_move
+                return child_node.best_move
+        return None
 
     def find_best_move(self, node: TreeNode, depth: int, current_side: Color) -> Optional[Tuple[int, int]]:
         possible_moves = node.board_state.get_possible_moves(Candidate(mode=0, size=node.board_state.size))
         if not possible_moves:
             return None
 
-        # win_move = self.check_immediate_win(possible_moves, current_side)
-        # if win_move:
-        #     node.best_move = win_move
-        #     node.score = 100000
-        #     return win_move
-
         prioritized_nodes: List[TreeNode] = self.sort_priority(node, possible_moves, current_side)
         
-        check_win = self.check_immediate_win(prioritized_nodes, current_side)
-        if check_win:
-            return check_win
+        with ProcessPoolExecutor(max_workers=8) as executor:
+            futures = {}
+            for child_node in prioritized_nodes:
+                futures[executor.submit(self.alphabeta, child_node, depth - 1, -float('inf'), float('inf'), self.get_opponent_side(current_side))] = child_node
 
-        best_move = None
-        best_score = -float('inf')
+            best_move = None
+            best_score = -float('inf')
 
-        for child_node in prioritized_nodes:
-            if child_node.hash_val in self.transposition_table:
-                child_score = self.transposition_table[child_node.hash_val][1]
-            else:
-                child_score = self.alphabeta(child_node, depth - 1, -float('inf'), float('inf'), self.get_opponent_side(current_side))
+            for future in as_completed(futures):
+                child_node = futures[future]
+                # print(child_node)
+                try:
+                    child_score = future.result()
+                    if child_score > best_score:
+                        best_score = child_score
+                        best_move = child_node.best_move
+                        node.best_move = child_node.best_move
+                        node.score = best_score
+                        print('best:', node.best_move, node.score)
+                except Exception:
+                    continue
 
-            # print(child_node.best_move, child_score)
-
-            if child_score > best_score:
-                best_score = child_score
-                best_move = child_node.best_move
-                node.best_move = child_node.best_move
-
+        self.transposition_table[node.hash_val] = (depth, best_score)
         return best_score, best_move
 
     def timed_search(self, node: TreeNode, max_time: float) -> Tuple[Optional[Tuple[int, int]], float, int]:

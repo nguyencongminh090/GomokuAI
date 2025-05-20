@@ -511,10 +511,10 @@ class Board:
                             
     def to_string(self) -> str:
         s = []
-        header = "  " + " ".join([chr(ord('A') + i) for i in range(self.board_size)])
+        header = "   " + " ".join([chr(ord('A') + i) for i in range(self.board_size)])
         s.append(header)
         for y in range(self.board_size -1, -1, -1): 
-            row_str = f"{y+1:2d} "
+            row_str = f"{str(y+1).ljust(2)} "
             for x in range(self.board_size):
                 pos = Pos(x,y)
                 piece = self.get_piece_at(pos)

@@ -11,6 +11,12 @@ import sys # For potentially accessing command line args or environment vars lat
 # Assuming these are in the same package
 from .types import (Pattern, Pattern4, Value, Rule, Color, CandidateRange,
                     SIDE_NB, PATTERN_NB, RULE_NB)
+
+
+# --- Engine Information (added as per search.py usage) ---
+ENGINE_NAME: str = "PyRapfi"
+ENGINE_AUTHOR: str = "AI Agent & User"
+
 # PCODE_NB and THREAT_NB are defined in this file as per C++ config.h
 # UNIQUE_PCODE_COUNT will be determined by pattern_utils.py and used to size P4SCORES dynamically
 

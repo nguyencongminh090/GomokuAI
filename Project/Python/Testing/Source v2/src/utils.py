@@ -369,24 +369,27 @@ def get_version_numbers() -> Tuple[int, int, int]:
 def get_version_info() -> str:
     """Returns the engine version information string."""
     major, minor, rev = get_version_numbers()
-    # Assuming ENGINE_NAME is defined, perhaps in config.py
     try:
-        from .. import config
-        name = config.ENGINE_NAME
-    except ImportError:
-        name = "PyGomokuEngine"
+        # Try to get from config module if it's imported as engine_config
+        from . import config as current_engine_config 
+        name = current_engine_config.ENGINE_NAME
+    except (ImportError, AttributeError):
+        # Fallback if config isn't available or doesn't have the attributes yet
+        # This might happen during early stages of module loading or if utils.py is tested standalone
+        name = "PyGomokuEngine_Fallback" 
     return f"{name} version {major}.{minor}.{rev}"
 
 def get_engine_info() -> str:
     """Returns general engine information."""
     try:
-        from .. import config
-        name = config.ENGINE_NAME
-        author = config.ENGINE_AUTHOR
-    except ImportError:
-        name = "PyGomokuEngine"
-        author = "AI Agent & User"
+        from . import config as current_engine_config
+        name = current_engine_config.ENGINE_NAME
+        author = current_engine_config.ENGINE_AUTHOR
+    except (ImportError, AttributeError):
+        name = "PyGomokuEngine_Fallback"
+        author = "AI Agent & User_Fallback"
     return f"{name} by {author}"
+    
 
 
 if __name__ == '__main__':

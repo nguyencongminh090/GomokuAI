@@ -241,15 +241,13 @@ class ABSearcher(SearcherBase):
     def _iterative_deepening_loop(self, board: Board, options: SearchOptions,
                                   main_search_context: SimplifiedMainSearchThread):
         """Manages the iterative deepening process."""
-        if self.search_data is None: # Should have been created by search_main
+        if self.search_data is None: 
             return 
 
-        # Initial static evaluation for aspiration window
         current_board_eval = evaluate_board(board, options.game_rule.rule)
         
-        # Initialize scores for root moves (e.g., with this static eval or from history)
         for rm in self.search_data.root_moves:
-            rm.score = current_board_eval # Simple initial score
+            rm.value = current_board_eval 
 
         max_iter_depth = min(options.max_depth, engine_config.MAX_SEARCH_DEPTH)
         start_iter_depth = min(options.start_depth, max_iter_depth)
@@ -257,125 +255,80 @@ class ABSearcher(SearcherBase):
         for depth_iter in range(start_iter_depth, max_iter_depth + 1):
             self.search_data.current_search_depth = depth_iter
             
-            # Store previous iteration's best for aspiration
-            # previous_iter_best_score = self.search_data.root_moves[0].score if self.search_data.root_moves else current_board_eval
-            # For first iteration, use static eval. For subsequent, use best score from prev iter.
             aspiration_center_score = current_board_eval 
             if depth_iter > start_iter_depth and self.search_data.root_moves:
-                aspiration_center_score = self.search_data.root_moves[0].value # Use 'value' as it's updated
+                aspiration_center_score = self.search_data.root_moves[0].value
 
-            # --- Aspiration Search Loop (Simplified) ---
-            # Rapfi: aspirationSearch(rule, board, ss, prevValue, depth)
-            # We'll do a simplified root search here per PV line for multi-PV.
-            
-            # Save previous scores for sorting stability and UCI output
             for rm in self.search_data.root_moves:
                 rm.previous_value = rm.value
-                rm.previous_pv = list(rm.pv) # Make a copy
+                rm.previous_pv = list(rm.pv) 
 
-            if main_search_context and hasattr(main_search_context, 'previous_ply_best_move'):
-                # Store the best move from the previous iteration (completed_depth - 1)
+            if hasattr(main_search_context, 'previous_ply_best_move'): # Check attribute existence
                 if self.search_data.root_moves:
                     main_search_context.previous_ply_best_move = self.search_data.root_moves[0].move
 
 
             for pv_idx in range(self.search_data.multi_pv_count):
-                if pv_idx >= len(self.search_data.root_moves): break # Not enough moves for all PVs
+                if pv_idx >= len(self.search_data.root_moves): break 
 
                 self.search_data.current_pv_index = pv_idx
                 
-                # Determine aspiration window for this PV line's root move
-                # For multi-PV, aspiration window is typically wider or disabled for non-first PVs.
-                # Simplified: use a fixed window or full search for now.
-                # Rapfi uses root_delta which is set in aspirationSearch.
-                # For now, let's use a wide window for each root move search.
-                alpha = Value.VALUE_MATED_IN_MAX_PLY.value # Effectively -infinity
-                beta = Value.VALUE_MATE_IN_MAX_PLY.value   # Effectively +infinity
-                
-                # If it's not the first PV line, score of this root move is from previous iter
-                # or a very low value if it's a new move being explored for multi-PV.
-                # current_root_move_to_search = self.search_data.root_moves[pv_idx]
-
-                # TODO: Actual root search for self.search_data.root_moves[pv_idx]
-                # This would involve calling _recursive_search or similar.
-                # Value found_value = self._search_at_root_for_move(board, options, depth_iter, 
-                #                                                 current_root_move_to_search, alpha, beta)
-                # self.search_data.root_moves[pv_idx].value = found_value
-                # Update PV for root_moves[pv_idx] based on stack
-
-                # Placeholder: just assign a dummy score for testing progression
-                # In reality, this calls the search for that specific root move as the first move.
-                # We need a search stack for the root.
-                root_stack_manager = SearchStackManager(max_depth=depth_iter + 2, initial_static_eval=current_board_eval)
-                
-                # Hypothetical call to a root-level search function for one root move
-                # This function would then call _recursive_search
-                # found_score = self._perform_search_for_root_move(
-                #    board, options, depth_iter, self.search_data.root_moves[pv_idx],
-                #    alpha, beta, root_stack_manager.root_stack_entry()
-                # )
-                # self.search_data.root_moves[pv_idx].value = found_score
-                # self.search_data.root_moves[pv_idx].pv = root_stack_manager.root_stack_entry().pv 
-                # self.search_data.root_moves[pv_idx].sel_depth = self.search_data.sel_depth_max (updated in recursive search)
+                alpha = Value.VALUE_MATED_IN_MAX_PLY.value 
+                beta = Value.VALUE_MATE_IN_MAX_PLY.value   
                 
                 # --- Mocking search result for now ---
-                mock_score = current_board_eval - pv_idx * 10 # Give slightly different scores
-                if pv_idx == 0 and depth_iter % 2 == 0 : mock_score += 20 # Make PV0 better sometimes
+                mock_score = current_board_eval - pv_idx * 10 
+                if pv_idx == 0 and depth_iter % 2 == 0 : mock_score += 20 
                 self.search_data.root_moves[pv_idx].value = mock_score
-                self.search_data.root_moves[pv_idx].sel_depth = depth_iter # Mock sel_depth
-                # Mock PV
-                if self.search_data.root_moves[pv_idx].pv: # pv[0] is the move
+                self.search_data.root_moves[pv_idx].sel_depth = depth_iter 
+                if self.search_data.root_moves[pv_idx].pv: 
                     mock_next_move = Pos(self.search_data.root_moves[pv_idx].pv[0].x + 1, self.search_data.root_moves[pv_idx].pv[0].y)
-                    if mock_next_move.is_on_board(board.board_size, board.board_size):
+                    if mock_next_move.is_on_board(board.board_size, board.board_size): # Use board from parameters
                          self.search_data.root_moves[pv_idx].pv = [self.search_data.root_moves[pv_idx].pv[0], mock_next_move]
                     else:
                          self.search_data.root_moves[pv_idx].pv = [self.search_data.root_moves[pv_idx].pv[0]]
-
                 # --- End Mocking search result ---
 
-                # Sort root moves after each PV line is searched (within this iteration)
                 if options.balance_mode != SearchOptions.BalanceMode.BALANCE_NONE:
-                    comp = BalanceMoveValueComparator(options.balance_bias)
-                    self.search_data.root_moves.sort(key=lambda rm: comp.compare(rm, RootMove(Pos.NONE)), reverse=True) # Complex key for sort
+                    # Sorting with BalanceMoveValueComparator needs a proper key function
+                    # For now, using a simplified sort based on the regular value for testing flow
+                    self.search_data.root_moves.sort(key=lambda rm_sort: rm_sort.value, reverse=True)
                 else:
-                    self.search_data.root_moves.sort(key=lambda rm: (rm.value, rm.previous_value), reverse=True)
+                    self.search_data.root_moves.sort(key=lambda rm_sort: (rm_sort.value, rm_sort.previous_value), reverse=True)
 
                 self.printer.print_pv_completes(main_search_context, self.time_control,
                                                 depth_iter, pv_idx, self.search_data.multi_pv_count,
-                                                self.search_data.root_moves[pv_idx], # Current best after sort
-                                                getattr(main_search_context, 'total_nodes_accumulated', 0) # Pass accumulated nodes
+                                                self.search_data.root_moves[pv_idx], 
+                                                getattr(main_search_context, 'total_nodes_accumulated', 0) 
                                                 )
 
-                if self.check_timeup_condition(): break # Check time after each PV line search
-
-            # Iteration complete for this depth
+                if self.check_timeup_condition(): break 
+            
             if not self.check_timeup_condition():
                 self.search_data.completed_search_depth = depth_iter
-                self.printer.print_depth_completes(main_search_context, self.time_control,
-                                                   depth_iter, self.search_data.root_moves[0])
+                if self.search_data.root_moves: # Ensure root_moves is not empty
+                    self.printer.print_depth_completes(main_search_context, self.time_control,
+                                                      depth_iter, self.search_data.root_moves[0])
             
-            # Check stop conditions (time, nodes, mate found, etc.)
-            # This uses TimeControl.check_stop which is more advanced
             stop_conditions = StopConditions(
                 current_search_depth=depth_iter,
-                last_best_move_change_depth=depth_iter - self.search_data.best_move_changes_current_iter, # Simplified
+                # ***** CORRECTED ATTRIBUTE NAME HERE *****
+                last_best_move_change_depth=depth_iter - self.search_data.best_move_changes_this_iter, 
                 current_best_value=self.search_data.root_moves[0].value if self.search_data.root_moves else Value.VALUE_NONE.value,
                 previous_search_best_value=self.previous_search_best_value,
                 previous_time_reduction_factor=self.previous_time_reduction_factor,
-                avg_best_move_changes_this_iter=float(self.search_data.best_move_changes_current_iter) # Simplified
+                avg_best_move_changes_this_iter=float(self.search_data.best_move_changes_this_iter) 
             )
             should_stop, new_reduction_factor = self.time_control.check_stop(stop_conditions, self.previous_time_reduction_factor)
-            self.previous_time_reduction_factor = new_reduction_factor # Update for next iter's check_stop
+            self.previous_time_reduction_factor = new_reduction_factor 
 
             if should_stop or self.check_timeup_condition():
-                # If mate is found, Rapfi might search a few more depths (NumIterationAfterMate)
-                # For now, stop if time control says so.
                 if hasattr(main_search_context, 'mark_pondering_available'):
                     main_search_context.mark_pondering_available()
-                break # Exit iterative deepening loop
+                break  # Exit iterative deepening loop
             
             # Prepare for next iteration (e.g. reset best_move_changes_current_iter)
-            self.search_data.clear_for_next_iteration() # Resets some per-iteration stats
+            # self.search_data.clear_for_next_iteration() # Resets some per-iteration stats
 
 
     def _recursive_search(self, board: Board, options: SearchOptions,
@@ -466,11 +419,13 @@ if __name__ == '__main__':
             self.search_options: SearchOptions = search_opts
             self.best_move_found: Pos = Pos.NONE
             self.result_action_type: ActionType = ActionType.MOVE
-            self.total_nodes_accumulated: int = 0 # For printer
+            self.total_nodes_accumulated: int = 0 
             self.in_ponder: bool = False
-            self.board_size_for_output = board_obj.board_size # For printer
-        
-        def options(self) -> SearchOptions: # For make_search_data
+            self.board_size_for_output = board_obj.board_size 
+            self.root_moves: List[RootMove] = [] # Add this to store the final root moves list
+            self.best_root_move_obj: Optional[RootMove] = None # Explicitly for printer
+
+        def options(self) -> SearchOptions: 
             return self.search_options
         
         def mark_pondering_available(self): pass

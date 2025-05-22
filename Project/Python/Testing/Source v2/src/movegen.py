@@ -138,20 +138,44 @@ def _basic_pattern_filter(board: 'Board', pos: Pos, side: Color, gen_type: GenTy
     return bool(gen_type & GenType.TRIVIAL) # If TRIVIAL is set, pass if no other category matched
 
 def _pre_check_filter(board: 'Board', side: Color, gen_type: GenType) -> bool:
-    """A fast check to skip unnecessary move generation if certain patterns don't exist."""
-    if gen_type & GenType.VCF:
-        # Get p4_count from current board state
+    """
+    A fast check to skip unnecessary move generation.
+    This filter is mainly for specific tactical generations when TRIVIAL is not requested.
+    If GenType.TRIVIAL is part of the request (e.g. in GenType.ALL), this pre-filter should pass.
+    """
+    # If TRIVIAL moves are acceptable, let _basic_pattern_filter handle it.
+    if gen_type & GenType.TRIVIAL:
+        return True
+    
+    # If only VCF type moves are requested (and TRIVIAL is not)
+    # Check if any gen_type bits *other than* VCF and COMB are set.
+    # If gen_type is *exclusively* VCF or VCF|COMB:
+    is_exclusively_vcf_comb = (gen_type & (GenType.VCF | GenType.COMB)) == gen_type and \
+                              not (gen_type & ~(GenType.VCF | GenType.COMB))
+
+    if is_exclusively_vcf_comb and (gen_type & GenType.VCF):
         p4_counts_for_side = board.get_current_state_info().p4_count[side.value]
-        if gen_type & GenType.COMB:
+        if gen_type & GenType.COMB: # VCF + COMB exclusively
             if (p4_counts_for_side[Pattern4.D_BLOCK4_PLUS.value] + \
                 p4_counts_for_side[Pattern4.C_BLOCK4_FLEX3.value]) == 0:
-                return False # No D_BLOCK4_PLUS or C_BLOCK4_FLEX3, so no VCF-COMB moves
-        else: # VCF without COMB
+                # print(f"DEBUG PRE_CHECK: Exclusive VCF+COMB returning False for {side.name}")
+                return False 
+        else: # VCF exclusively (no COMB flag means VCF alone or with other non-TRIVIAL flags)
             if (p4_counts_for_side[Pattern4.E_BLOCK4.value] + \
                 p4_counts_for_side[Pattern4.D_BLOCK4_PLUS.value] + \
                 p4_counts_for_side[Pattern4.C_BLOCK4_FLEX3.value]) == 0:
+                # print(f"DEBUG PRE_CHECK: Exclusive VCF returning False for {side.name}")
                 return False
-    return True # Continue generation
+    
+    # Add similar exclusive checks for VCT, VC2 if desired.
+    # For example:
+    # is_exclusively_vct_comb = (gen_type & (GenType.VCT | GenType.COMB)) == gen_type and \
+    #                           not (gen_type & ~(GenType.VCT | GenType.COMB))
+    # if is_exclusively_vct_comb and (gen_type & GenType.VCT):
+    #     # ... check VCT preconditions ...
+    #     pass
+
+    return True
 
 def _find_first_pattern4_pos(board: 'Board', side: Color, p4_target: Pattern4) -> Pos:
     """Gets the first found pos that has the given pattern4."""
@@ -232,11 +256,14 @@ def generate_moves(board: 'Board', rule: Rule, gen_type: GenType) -> List[Scored
     current_player = board.side_to_move()
 
     if not _pre_check_filter(board, current_player, gen_type):
-        return moves # Skip generation based on pre-check
+        print('Skip by [_pre_check_filter]')
+        return moves # Skip generation based on pre-check   
+
+       
 
     for pos in board.iter_candidate_moves():
         if _basic_pattern_filter(board, pos, current_player, gen_type, rule):
-            moves.append(ScoredMove(pos)) # Score is 0 by default
+            moves.append(ScoredMove(pos)) # Score is 0 by default 
     return moves
 
 def generate_neighbor_moves(board: 'Board', rule: Rule, gen_type: GenType,

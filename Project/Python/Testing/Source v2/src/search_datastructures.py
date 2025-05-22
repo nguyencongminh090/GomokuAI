@@ -14,6 +14,7 @@ from .pos import Pos, MAX_MOVES
 from .history import MainHistory, CounterMoveHistory 
 from .utils import PRNG 
 from .search_abc import SearchDataBase # <--- IMPORT THE ABC
+from .search_stack import SearchStackManager
 
 # ... (RootMove, Balance2Move, SearchOptions, comparators, get_draw_value remain the same) ...
 def balanced_value(value: int, bias: int) -> int:
@@ -104,6 +105,7 @@ def get_draw_value(board_non_pass_move_count: int, side_to_move: Color, options:
 class ABSearchData(SearchDataBase): # Inherit from the ABC
     def __init__(self, options: Optional[SearchOptions] = None):
         super().__init__() # Call ABC constructor
+
         self.multi_pv_count: int = options.multi_pv if options else 1
         self.current_pv_index: int = 0     
         self.current_search_depth: int = 0 
@@ -113,10 +115,15 @@ class ABSearchData(SearchDataBase): # Inherit from the ABC
 
         self.main_history: MainHistory = MainHistory()
         self.counter_move_history: CounterMoveHistory = CounterMoveHistory()
+        self.search_stack_manager: SearchStackManager = SearchStackManager() # Added previously
+
+        self.nodes_this_search: int = 0 # <<< ADDED FOR NODE COUNTING FOR CURRENT SEARCH COMMAND
 
         self.root_moves: List[RootMove] = [] 
+        
         self.best_move_root: Pos = Pos.NONE  
         self.result_action: ActionType = ActionType.MOVE 
+        
 
         self.sel_depth_max: int = 0 
         self.root_alpha: int = Value.VALUE_NONE.value
@@ -126,19 +133,20 @@ class ABSearchData(SearchDataBase): # Inherit from the ABC
         self.previous_pv_line: List[Pos] = []
         self.previous_best_move_at_root: Pos = Pos.NONE
 
-    def clear_data(self, search_thread_instance: Any): # Implements abstract method
+    def clear_data(self, search_thread_instance: Any): 
         current_options = search_thread_instance.options()
-        
         self.multi_pv_count = current_options.multi_pv
         self.current_pv_index = 0
         self.current_search_depth = 0  
         self.iter_completed_depth = 0 
         self.best_move_changes_this_iter = 0 
         self.is_singular_root = False 
-        
         self.main_history.init(Score(0)) 
         self.counter_move_history.init((Pos.NONE, Pos.NONE))
+        self.search_stack_manager = SearchStackManager() # Re-init
         
+        self.nodes_this_search = 0 # <<< RESET NODE COUNT
+
         self.root_moves = []
         self.best_move_root = Pos.NONE
         self.result_action = ActionType.MOVE

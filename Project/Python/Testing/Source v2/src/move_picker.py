@@ -70,9 +70,12 @@ class MovePicker:
         self.skip_quiet_threshold: Optional[Score] = skip_quiet_threshold
 
     def _score_quiet_moves(self):
+        """Scores quiet moves using main_history and sorts them."""
         for sm in self._quiet_moves:
             sm.score = self.main_history.get_score(self.current_player, sm.pos)
-        self._quiet_moves.sort(key=ScoredMove.score_comparator)
+        
+        # Sorts descending by score attribute
+        self._quiet_moves.sort(key=lambda sm: sm.score, reverse=True)
 
     def _is_already_processed(self, move: Pos, stage_limit: PickStage) -> bool:
         if move == Pos.NONE: return True

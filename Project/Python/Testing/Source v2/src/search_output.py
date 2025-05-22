@@ -3,6 +3,7 @@ Handles printing search-related information and statistics.
 Based on Rapfi's searchoutput.h and searchoutput.cpp.
 """
 from __future__ import annotations # For type hinting
+import time 
 from typing import List, Optional, TYPE_CHECKING
 # Ensure Any is imported if used for placeholders like SearchContext
 from typing import Any # Added Any
@@ -175,12 +176,15 @@ class SearchPrinter:
                   f"{pv_text}")
 
     def print_search_ends(self, search_context: SearchContext, time_control: TimeControl,
-                          final_depth: int, best_thread_context: BestSearchContext, total_nodes: int):
+                        final_depth: int, best_thread_context: BestSearchContext, total_nodes: int):
+    
+        unique_call_id = time.time() # Get a timestamp for uniqueness
+        print(f"DEBUG: print_search_ends called at {unique_call_id}") # Unique marker
         # final_depth is completed depth from best thread/overall
         # best_thread_context.rootMoves[0] gives the best PV and score
         # total_nodes is aggregated from all threads (or single thread total)
         if engine_config.MESSAGE_MODE == engine_config.MsgMode.NORMAL or \
-           engine_config.MESSAGE_MODE == engine_config.MsgMode.BRIEF:
+            engine_config.MESSAGE_MODE == engine_config.MsgMode.BRIEF:
             
             elapsed_ms = time_control.elapsed()
             speed = (total_nodes * 1000) // max(elapsed_ms, 1)
@@ -189,16 +193,18 @@ class SearchPrinter:
             best_rm = getattr(best_thread_context, 'best_root_move_obj', None) # Assume best_thread_context has this
             if not best_rm and hasattr(best_thread_context, 'root_moves') and best_thread_context.root_moves:
                 best_rm = best_thread_context.root_moves[0]
+                
 
             if best_rm:
                 board_size = getattr(search_context, 'board_size_for_output', 15)
                 pv_text = self._moves_to_text(best_rm.pv, board_size)
                 
-                print(f"{'[Pondering] ' if is_pondering else ''}"
-                      f"Speed {speed_text(speed)} | Depth {final_depth}-{best_rm.sel_depth} | "
-                      f"Eval {best_rm.value} | Node {nodes_text(total_nodes)} | "
-                      f"Time {time_text(elapsed_ms)}")
-
+                print(f"[{unique_call_id}] " # Add marker
+                        f"{'[Pondering] ' if is_pondering else ''}"
+                        f"Speed {speed_text(speed)} | Depth {final_depth}-{best_rm.sel_depth} | "
+                        f"Eval {best_rm.value} | Node {nodes_text(total_nodes)} | "
+                        f"Time {time_text(elapsed_ms)}")
+                
                 if engine_config.MESSAGE_MODE == engine_config.MsgMode.BRIEF or \
                    best_thread_context != search_context: # If best result came from another "thread"
                     # Output PV if brief mode or if best thread is different from main context
@@ -208,9 +214,12 @@ class SearchPrinter:
                     if hasattr(best_rm, 'previous_pv') and len(best_rm.pv) <=2 and len(best_rm.previous_pv) > 2:
                         chosen_pv = best_rm.previous_pv
                     pv_text_final = self._moves_to_text(chosen_pv, board_size)
-                    print(f"Bestline {pv_text_final}")
+                    print(f"[{unique_call_id}] Bestline {pv_text_final}")
+                    # print(f"Bestline {pv_text_final}")
             else:
-                print(f"{'[Pondering] ' if is_pondering else ''}Search ended. No best move found? Time: {time_text(elapsed_ms)}")
+                print(f"[{unique_call_id}] " # Add marker
+                  f"{'[Pondering] ' if is_pondering else ''}Search ended. No best move found? Time: {time_text(elapsed_ms)}")
+                # print(f"{'[Pondering] ' if is_pondering else ''}Search ended. No best move found? Time: {time_text(elapsed_ms)}")
 
 
     def print_bestmove_uci_style(self, best_move: Pos, ponder_move: Optional[Pos] = None):

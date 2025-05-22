@@ -7,7 +7,7 @@ import math
 from typing import List, Tuple, Optional, Iterator, Callable, Any, Dict # Added Iterator, Callable
 from enum import IntEnum # Added IntEnum
 
-from .types import (Pattern, Pattern4, Color, Rule, PatternCode, Score, Value,
+from .types import (Pattern, Pattern4, Color, Rule, PatternCode, Score, Value, HashKey,
                     SIDE_NB, PATTERN_NB, PATTERN4_NB, RULE_NB, CandidateRange)
 from .pos import (Pos, Direction, FULL_BOARD_SIZE, FULL_BOARD_CELL_COUNT, MAX_BOARD_SIZE,
                   BOARD_BOUNDARY, DIRECTIONS, RANGE_SQUARE2, RANGE_SQUARE2_LINE3,
@@ -531,6 +531,49 @@ class Board:
         if cell_obj.pattern4[Color.BLACK.value] == Pattern4.FORBID:
             return True
         return False
+    
+    def zobrist_key(self) -> HashKey: # Changed from int to HashKey for consistency
+        """
+        Calculates and returns the full Zobrist key for the current board position.
+        Combines the incremental key with the side-to-move component.
+        """
+        # Ensure zobrist_side and self.current_side.value are valid for indexing
+        # self.current_zobrist_key already has piece/position components XORed in during make_move/undo_move
+        if 0 <= self.current_side.value < len(zobrist_side): # zobrist_side is from hash_utils
+            side_key_component = zobrist_side[self.current_side.value]
+            return self.current_zobrist_key ^ side_key_component
+        else:
+            # This should not happen if current_side is always valid
+            # print(f"Warning: Invalid current_side value {self.current_side.value} for zobrist_side lookup.", file=sys.stderr)
+            return self.current_zobrist_key # Return base key without side component as a fallback
+    
+    def zobrist_key_after_move(self, move: Pos, player_who_moved: Color) -> HashKey:
+        """
+        Computes the Zobrist key *after* `move` is made by `player_who_moved`.
+        Does not change the board state.
+        """
+        # Key after move = current_key ^ piece_at_pos ^ old_side_to_move ^ new_side_to_move
+        new_key = self.current_zobrist_key # Start with incremental key (without side)
+        
+        if move != Pos.PASS:
+            new_key ^= zobrist_table[player_who_moved.value][move._pos]
+            
+        # The current self.zobrist_key() includes XOR with current_side.
+        # To get key after move:
+        # 1. Current full key: self.current_zobrist_key ^ zobrist_side[self.current_side.value]
+        # 2. Key after piece placed (but side not yet flipped):
+        #    key_with_piece = self.current_zobrist_key ^ zobrist_table[self.current_side.value][move._pos] (if self.current_zobrist_key is base)
+        #    Then XOR with new side: key_with_piece ^ zobrist_side[(~self.current_side).value]
+        
+        # Let self.current_zobrist_key be the base key (pieces only).
+        # The full key is self.current_zobrist_key ^ zobrist_side[self.current_side]
+        
+        key_after_move_base = self.current_zobrist_key
+        if move != Pos.PASS:
+            key_after_move_base ^= zobrist_table[self.current_side.value][move._pos] # Player making the move is self.current_side
+        
+        # Then XOR with the *new* side to move
+        return key_after_move_base ^ zobrist_side[(~self.current_side).value]
 
 
 if __name__ == '__main__':

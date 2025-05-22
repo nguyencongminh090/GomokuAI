@@ -17,6 +17,7 @@ from .types import (Pattern, Pattern4, Value, Rule, Color, CandidateRange,
 ENGINE_NAME: str = "PyRapfi"
 ENGINE_AUTHOR: str = "AI Agent & User"
 
+
 # PCODE_NB and THREAT_NB are defined in this file as per C++ config.h
 # UNIQUE_PCODE_COUNT will be determined by pattern_utils.py and used to size P4SCORES dynamically
 
@@ -106,6 +107,12 @@ class Pattern4Score:
         return f"P4S({self._pattern4.name}, self:{self._score_self}, oppo:{self._score_oppo})"
 
 # --- Global Configuration Variables (mirrors externs in config.h) ---
+
+# Search options
+DEFAULT_SEARCHER_NAME: str = "alphabeta"
+ASPIRATION_WINDOW: bool = True  # Whether to enable aspiration window logic at all
+ASPIRATION_MIN_DEPTH: int = 3   # Minimum depth to start using aspiration windows (if enabled) # ADD THIS LINE
+FILTER_SYMMETRY_ROOT_MOVES: bool = True
 
 # Model configs
 SCALING_FACTOR: float = 200.0

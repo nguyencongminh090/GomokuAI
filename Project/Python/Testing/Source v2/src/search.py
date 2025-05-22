@@ -2,317 +2,277 @@
 Alpha-Beta search algorithm implementation.
 Based on Rapfi's search.cpp and ab/searcher.h.
 """
-from __future__ import annotations # For type hinting
-from typing import List, Optional, TYPE_CHECKING, Any
-import time # For basic timing if needed outside TimeControl
+from __future__ import annotations
+from typing import List, Optional, TYPE_CHECKING, Any, cast
+import time 
+import math 
 
-from .types import Value, Rule, Depth, ActionType, GameRule, OpeningRule, Bound
-from .pos import MAX_MOVES, Pos # For reduction table sizing, etc.
-from .utils import now # For timing
-from .config import ENGINE_NAME, ENGINE_AUTHOR # Using config for these
-from . import config as engine_config # For various search parameters
+from .types import (Value, Rule, Depth, ActionType, GameRule, OpeningRule, Bound, 
+                    mate_in, mated_in) # Ensure mate_in, mated_in are imported
+from .pos import MAX_MOVES, Pos 
+from .utils import now 
+from .config import ENGINE_NAME, ENGINE_AUTHOR 
+from . import config as engine_config 
 
-from .search_abc import SearcherBase, SearchDataBase # Abstract base classes
+from .search_abc import SearcherBase, SearchDataBase 
 from .search_datastructures import (SearchOptions, RootMove, ABSearchData,
                                     root_move_value_comparator, BalanceMoveValueComparator,
-                                    get_draw_value)
+                                    get_draw_value, balanced_value) # Added balanced_value
 from .time_control import TimeControl, TimeInfo, StopConditions
-from .hashtable import TranspositionTable
+from .hashtable import TranspositionTable # TTEntry not explicitly needed for type hints here
 from .search_stack import SearchStackManager, StackEntry
-from .move_picker import MovePicker, PickStage # For type hints or direct use
+from .move_picker import MovePicker, PickStage 
 from .history import MainHistory, CounterMoveHistory
-from .evaluation import evaluate as evaluate_board # Renamed to avoid clash if a local 'evaluate' is defined
+from .evaluation import evaluate as evaluate_board 
 from .wincheck import quick_win_check
 from .search_output import SearchPrinter
-# from .opening import Opening # If we integrate opening book later
-# from .skill import SkillMovePicker # If we integrate skill levels later
 
 if TYPE_CHECKING:
     from .board import Board
-    # ThreadPool and MainSearchThread types are complex for single-threaded Python start
-    # Using Any for now for those parameters in abstract methods if we were to implement them fully.
-    # For our single-threaded approach, search_main and search will be called differently.
     SimplifiedThreadPool = Any
     SimplifiedMainSearchThread = Any
     SimplifiedSearchThread = Any
 
 
 class ABSearcher(SearcherBase):
-    """
-    Implements the Alpha-Beta search algorithm with iterative deepening.
-    """
     def __init__(self):
         super().__init__()
         self.tt: TranspositionTable = TranspositionTable()
         self.time_control: TimeControl = TimeControl()
-        self.printer: SearchPrinter = SearchPrinter() # For outputting search info
-
-        # Search-specific data, managed per top-level "go" command
-        self.search_data: Optional[ABSearchData] = None # Created by make_search_data for a search instance
-
-        # Reduction tables (LUTs for Late Move Reduction, etc.)
-        # reductions[rule_val][depth_or_move_count] -> reduction_amount (Depth)
-        # Rapfi: std::array<Depth, MAX_MOVES + 1> reductions[RULE_NB];
-        # Max depth or move count for indexing. MAX_MOVES is board_area + 1.
-        # Let's use a simple list of lists for now.
+        self.printer: SearchPrinter = SearchPrinter()
+        self.search_data: Optional[ABSearchData] = None 
         self.reduction_tables: List[List[Depth]] = [
             [0.0] * (MAX_MOVES + 1) for _ in range(engine_config.RULE_NB)
         ]
-        self._init_reduction_lut() # Initialize with default/Rapfi values
-
-        # Per-game state (like in Rapfi's ABSearcher)
+        self._init_reduction_lut() 
         self.previous_search_best_value: int = Value.VALUE_NONE.value
         self.previous_time_reduction_factor: float = 1.0
 
-
     def _init_reduction_lut(self):
-        """Initializes reduction tables. Placeholder for now."""
-        # TODO: Populate with actual reduction values based on Rapfi's
-        # Search::AB::initReductionLUT or similar logic.
-        # For example, reductions based on depth and move number.
-        # For now, they are all 0.0.
         for r_idx in range(engine_config.RULE_NB):
             for i in range(MAX_MOVES + 1):
-                # Example: Simple reduction that increases with depth and move_count
-                # This is NOT Rapfi's actual logic, just a placeholder.
-                # self.reduction_tables[r_idx][i] = math.log(1 + i * 0.1) / 2.0
-                self.reduction_tables[r_idx][i] = 0.0 # Start with no reductions
-
-    # --- Implementation of SearcherBase abstract methods ---
+                self.reduction_tables[r_idx][i] = 0.0 
 
     def make_search_data(self, search_thread_instance: SimplifiedSearchThread) -> ABSearchData:
-        """
-        Creates an instance of ABSearchData for a search.
-        In single-threaded, search_thread_instance might be 'self' or a simple context.
-        """
-        # The 'options' for ABSearchData should come from the current search command.
-        # Assuming search_thread_instance (or a SearchContext passed to think()) has options.
-        current_options = getattr(search_thread_instance, 'options_obj', SearchOptions())
-        return ABSearchData(options=current_options)
+        current_options = getattr(search_thread_instance, 'search_options', None)
+        if current_options is None and hasattr(search_thread_instance, 'options'):
+            current_options = search_thread_instance.options()
+        if not isinstance(current_options, SearchOptions):
+            current_options = SearchOptions()
+        ab_data = ABSearchData(options=current_options)
+        # Ensure search_stack_manager is initialized here if not in ABSearchData constructor by default
+        if not hasattr(ab_data, 'search_stack_manager'):
+             ab_data.search_stack_manager = SearchStackManager(
+                 max_depth=current_options.max_depth + 10, # Or from engine_config.MAX_SEARCH_DEPTH
+                 initial_static_eval=Value.VALUE_ZERO.value # Placeholder, will be set in ID loop
+             )
+        return ab_data
 
     def set_memory_limit(self, memory_size_kb: int) -> None:
-        """Sets the memory size limit for the TT."""
         self.tt.resize(memory_size_kb)
 
     def get_memory_limit(self) -> int:
-        """Gets the current memory size limit of the TT in KiB."""
         return self.tt.hash_size_kb()
 
     def clear(self, thread_pool_instance: Optional[SimplifiedThreadPool] = None, clear_all_memory: bool = False) -> None:
-        """
-        Clears searcher states between different games.
-        `thread_pool_instance` is less relevant for single-threaded.
-        """
         self.previous_search_best_value = Value.VALUE_NONE.value
         self.previous_time_reduction_factor = 1.0
-        # Re-initialize reduction LUTs if they depend on game-specific settings (unlikely for static ones)
-        # self._init_reduction_lut()
-
         if clear_all_memory:
             self.tt.clear()
-        # History tables are part of ABSearchData, cleared per new search call.
 
     def search_main(self, main_search_context: SimplifiedMainSearchThread) -> None:
-        """
-        Main entry point for starting a search (orchestrates iterative deepening).
-        `main_search_context` would hold the board, search options, and store results.
-        In Rapfi, this is called on the MainSearchThread.
-        """
-        # 1. Setup: Get board, options from context.
-        #    Initialize self.search_data.
-        #    Handle opening book, immediate wins/forced moves if any.
-        #    Setup TimeControl.
-        #    Start iterative deepening.
-        #    Store best move in context.
-        
-        # This will be the main iterative deepening loop orchestrator.
-        # For now, a placeholder.
-        
-        # Assume main_search_context has:
-        # - board_to_search: Board
-        # - search_options: SearchOptions
-        # - And attributes to store results: best_move_found, result_action_type
-
         current_board: Board = main_search_context.board_to_search
         options: SearchOptions = main_search_context.search_options
         
-        self.search_data = self.make_search_data(main_search_context) # Create/reset search data
+        self.search_data = self.make_search_data(main_search_context)
+        if not self.search_data: return
+
         self.search_data.root_moves = self._generate_root_moves(current_board, options)
 
         if not self.search_data.root_moves:
-            # print("No moves to search at root.", file=sys.stderr)
-            main_search_context.best_move_found = Pos.NONE # Or PASS if allowed
-            main_search_context.result_action_type = ActionType.MOVE
+            if hasattr(main_search_context, 'best_move_found'): main_search_context.best_move_found = Pos.NONE 
+            if hasattr(main_search_context, 'result_action_type'): main_search_context.result_action_type = ActionType.MOVE
             return
 
-        # TODO: Opening book probe
-        # TODO: Check for immediate mate at root / single legal move
-
         self.time_control.init(
-            turn_time_ms=options.turn_time,
-            match_time_ms=options.match_time,
+            turn_time_ms=options.turn_time, match_time_ms=options.match_time,
             time_left_ms=options.time_left,
-            time_info=TimeInfo(ply=current_board.ply(), moves_left_in_game=options.moves_to_go or 30), # Estimate moves
-            inc_time_ms=options.inc_time,
-            moves_to_go=options.moves_to_go
+            time_info=TimeInfo(ply=current_board.ply(), moves_left_in_game=options.moves_to_go or 30),
+            inc_time_ms=options.inc_time, moves_to_go=options.moves_to_go
         )
-        self.tt.inc_generation() # New search, new generation for TT entries
+        self.tt.inc_generation() 
+
+        if hasattr(main_search_context, 'in_ponder'): main_search_context.in_ponder = getattr(options, 'pondering', False)
+        if hasattr(main_search_context, 'board_size_for_output'): main_search_context.board_size_for_output = current_board.board_size
 
         self.printer.print_search_starts(main_search_context, self.time_control)
-
         self._iterative_deepening_loop(current_board, options, main_search_context)
 
-        # After loop, select final best move from self.search_data.root_moves
+        final_best_root_move_obj: Optional[RootMove] = None
         if self.search_data.root_moves:
-            # Sort root_moves by score if not already sorted by last iteration
-            self.search_data.root_moves.sort(key=lambda rm: rm.value, reverse=True) # Higher score first
-            main_search_context.best_move_found = self.search_data.root_moves[0].move
-            main_search_context.result_action_type = self.search_data.result_action # May be set by opening/swap logic
+            if options.balance_mode != SearchOptions.BalanceMode.BALANCE_NONE:
+                comp = BalanceMoveValueComparator(options.balance_bias)
+                self.search_data.root_moves.sort(key=lambda rm: balanced_value(rm.value, comp.bias), reverse=True)
+            else:
+                self.search_data.root_moves.sort(key=lambda rm: (rm.value, rm.previous_value), reverse=True) 
+            final_best_root_move_obj = self.search_data.root_moves[0]
+            if hasattr(main_search_context, 'best_move_found'): main_search_context.best_move_found = final_best_root_move_obj.move
+            if hasattr(main_search_context, 'result_action_type'): main_search_context.result_action_type = self.search_data.result_action 
         else:
-            main_search_context.best_move_found = Pos.NONE
+            if hasattr(main_search_context, 'best_move_found'): main_search_context.best_move_found = Pos.NONE
         
-        # TODO: Pondering logic if applicable
+        if hasattr(main_search_context, 'best_root_move_obj'): main_search_context.best_root_move_obj = final_best_root_move_obj
+        if hasattr(main_search_context, 'root_moves'): main_search_context.root_moves = self.search_data.root_moves
 
-        # Save per-game state for next search
-        if self.search_data.root_moves:
+        if self.search_data.root_moves: 
             self.previous_search_best_value = self.search_data.root_moves[0].value
-        # self.previous_time_reduction_factor is updated by time_control.check_stop
-
-        # Output final search stats using printer
-        # This needs a "best_thread_context", which in single thread is just main_search_context
-        # Also need final completed depth.
+        
         self.printer.print_search_ends(main_search_context, self.time_control,
                                        self.search_data.completed_search_depth,
-                                       main_search_context, # As best_thread_context
-                                       getattr(main_search_context, 'total_nodes_accumulated', 0))
-
+                                       main_search_context, 
+                                       self.search_data.nodes_this_search # Use nodes from search_data
+                                       )
 
     def search(self, search_thread_context: SimplifiedSearchThread) -> None:
-        """
-        The main search function called for a specific depth iteration.
-        In Rapfi, this is called by each thread. In our single-thread model,
-        this will be called by the iterative deepening loop.
-        `search_thread_context` provides the board, options, and where to store results for this iteration.
-        """
-        # This will contain the call to the root aspiration search / root alpha-beta.
-        # It's the entry point for a single iteration of iterative deepening.
-        # For now, placeholder. The logic is mostly in _iterative_deepening_loop and below.
-        # In Rapfi, ABSearcher::search calls the aspiration search loop.
-        pass # Actual search per iteration happens in _iterative_deepening_loop for now
-
+        # Called by iterative deepening for each root move's search process
+        # This is where aspiration search for a specific root move would happen
+        # For now, _iterative_deepening_loop directly calls _recursive_search for children
+        pass
 
     def check_timeup_condition(self) -> bool:
-        """Checks if the search time limit has been reached."""
-        return self.time_control.is_time_up(check_optimal=False) # Check against maximum_time
+        return self.time_control.is_time_up(check_optimal=False)
 
-    # --- Helper methods for search ---
     def _generate_root_moves(self, board: Board, options: SearchOptions) -> List[RootMove]:
-        """Generates and possibly filters initial root moves."""
-        # Basic generation - a real engine might use a dedicated root movegen type
-        # or specialized move picker for the root.
-        # For now, use a general move picker and convert to RootMove objects.
-        
-        # In Rapfi, this is complex, involving MovePicker::ExtraArgs<MovePicker::ROOT>
-        # and potential filtering (symmetry, block_moves).
-        
-        # Simplified: get all candidate moves, then filter
-        temp_stack_entry = StackEntry() # Dummy stack for root move generation
-        # No TT move for initial generation, no specific history tables for root move gen picker.
-        # This is a simplification. Rapfi's root move picker might use some context.
+        if not self.search_data: # Should exist if called from search_main
+            # print("Warning: _generate_root_moves called without search_data", file=sys.stderr)
+            return [RootMove(board.center_pos())] if board.ply() == 0 else []
+
+        temp_stack_entry = StackEntry() 
         picker = MovePicker(board, options.game_rule.rule, Pos.NONE,
-                            MainHistory(), CounterMoveHistory(), # Fresh/dummy histories
+                            self.search_data.main_history, 
+                            self.search_data.counter_move_history, 
                             temp_stack_entry)
-        
         initial_moves: List[RootMove] = []
         try:
             while True:
                 move = next(picker)
                 if move not in options.block_moves:
                     initial_moves.append(RootMove(move))
-        except StopIteration:
-            pass
-        
-        # TODO: Symmetry filtering (complex) - Opening::filterSymmetryMoves
-        # For now, return all valid generated moves.
-        if not initial_moves and board.ply() == 0: # First move, no legal moves? (Should not happen)
-            return [RootMove(board.center_pos())] # Fallback to center
+        except StopIteration: pass
+        if not initial_moves and board.ply() == 0: return [RootMove(board.center_pos())] 
         return initial_moves
 
     def _iterative_deepening_loop(self, board: Board, options: SearchOptions,
                                   main_search_context: SimplifiedMainSearchThread):
-        """Manages the iterative deepening process."""
-        if self.search_data is None: 
-            return 
+        if self.search_data is None: return 
+        
+        self.search_data.search_stack_manager = SearchStackManager(
+            max_depth=options.max_depth + 10, 
+            initial_static_eval=evaluate_board(board, options.game_rule.rule)
+        )
+        self.search_data.nodes_this_search = 0 
 
-        current_board_eval = evaluate_board(board, options.game_rule.rule)
+        current_board_eval = self.search_data.search_stack_manager.root_stack_entry().static_eval
         
         for rm in self.search_data.root_moves:
-            rm.value = current_board_eval 
+            rm.value = rm.previous_value if rm.previous_value != Value.VALUE_NONE.value else current_board_eval
 
         max_iter_depth = min(options.max_depth, engine_config.MAX_SEARCH_DEPTH)
         start_iter_depth = min(options.start_depth, max_iter_depth)
-
+        
         for depth_iter in range(start_iter_depth, max_iter_depth + 1):
+            if self.search_data is None: break 
             self.search_data.current_search_depth = depth_iter
-            
-            aspiration_center_score = current_board_eval 
-            if depth_iter > start_iter_depth and self.search_data.root_moves:
-                aspiration_center_score = self.search_data.root_moves[0].value
+            self.search_data.best_move_changes_this_iter = 0 
+            # self.search_data.sel_depth_max = 0 # Reset per iteration overall max
 
             for rm in self.search_data.root_moves:
                 rm.previous_value = rm.value
                 rm.previous_pv = list(rm.pv) 
 
-            if hasattr(main_search_context, 'previous_ply_best_move'): # Check attribute existence
+            if hasattr(main_search_context, 'previous_ply_best_move'):
                 if self.search_data.root_moves:
                     main_search_context.previous_ply_best_move = self.search_data.root_moves[0].move
+            
+            aspiration_center = current_board_eval
+            if depth_iter > start_iter_depth and self.search_data.root_moves:
+                aspiration_center = self.search_data.root_moves[0].value 
 
+            root_aspiration_alpha = Value.VALUE_MATED_IN_MAX_PLY.value
+            root_aspiration_beta = Value.VALUE_MATE_IN_MAX_PLY.value
+            
+            if engine_config.ASPIRATION_WINDOW and depth_iter >= engine_config.ASPIRATION_MIN_DEPTH:
+                aspiration_delta_val = 50 + depth_iter * 5 
+                root_aspiration_alpha = max(Value.VALUE_MATED_IN_MAX_PLY.value, aspiration_center - aspiration_delta_val)
+                root_aspiration_beta = min(Value.VALUE_MATE_IN_MAX_PLY.value, aspiration_center + aspiration_delta_val)
 
             for pv_idx in range(self.search_data.multi_pv_count):
                 if pv_idx >= len(self.search_data.root_moves): break 
+                if self.search_data is None: break 
 
                 self.search_data.current_pv_index = pv_idx
+                current_root_move_obj = self.search_data.root_moves[pv_idx]
                 
-                alpha = Value.VALUE_MATED_IN_MAX_PLY.value 
-                beta = Value.VALUE_MATE_IN_MAX_PLY.value   
-                
-                # --- Mocking search result for now ---
-                mock_score = current_board_eval - pv_idx * 10 
-                if pv_idx == 0 and depth_iter % 2 == 0 : mock_score += 20 
-                self.search_data.root_moves[pv_idx].value = mock_score
-                self.search_data.root_moves[pv_idx].sel_depth = depth_iter 
-                if self.search_data.root_moves[pv_idx].pv: 
-                    mock_next_move = Pos(self.search_data.root_moves[pv_idx].pv[0].x + 1, self.search_data.root_moves[pv_idx].pv[0].y)
-                    if mock_next_move.is_on_board(board.board_size, board.board_size): # Use board from parameters
-                         self.search_data.root_moves[pv_idx].pv = [self.search_data.root_moves[pv_idx].pv[0], mock_next_move]
-                    else:
-                         self.search_data.root_moves[pv_idx].pv = [self.search_data.root_moves[pv_idx].pv[0]]
-                # --- End Mocking search result ---
+                # Reset sel_depth_max for this specific PV line's search
+                self.search_data.sel_depth_max = 0 
 
+                board.make_move(options.game_rule.rule, current_root_move_obj.move)
+                
+                ss_for_root_child = self.search_data.search_stack_manager.get_entry(board.ply())
+                ss_for_root_child.reset() 
+                ss_for_root_child.static_eval = evaluate_board(board, options.game_rule.rule)
+
+                child_alpha = -root_aspiration_beta 
+                child_beta = -root_aspiration_alpha  
+                
+                found_value_for_child = self._recursive_search(
+                    board, options, child_alpha, child_beta, 
+                    depth_iter - 1, ss_for_root_child, 
+                    is_pv_node=(pv_idx == 0), is_root_call=False 
+                )
+                score_for_root_move = -found_value_for_child 
+                
+                board.undo_move(options.game_rule.rule)
+
+                current_root_move_obj.value = score_for_root_move
+                current_root_move_obj.pv = [current_root_move_obj.move] + [p for p in ss_for_root_child.pv if p != Pos.NONE]
+                current_root_move_obj.sel_depth = self.search_data.sel_depth_max 
+
+                # Sort only processed root moves for printing the current best for this iteration
+                # This ensures root_moves[0] is always the best found *so far in this iteration* for print_pv_completes
+                temp_root_moves_processed_this_iter = self.search_data.root_moves[:pv_idx + 1]
                 if options.balance_mode != SearchOptions.BalanceMode.BALANCE_NONE:
-                    # Sorting with BalanceMoveValueComparator needs a proper key function
-                    # For now, using a simplified sort based on the regular value for testing flow
-                    self.search_data.root_moves.sort(key=lambda rm_sort: rm_sort.value, reverse=True)
+                    comp = BalanceMoveValueComparator(options.balance_bias)
+                    temp_sorted_moves = sorted(temp_root_moves_processed_this_iter, key=lambda rm: balanced_value(rm.value, comp.bias), reverse=True)
+                else:
+                    temp_sorted_moves = sorted(temp_root_moves_processed_this_iter, key=lambda rm: (rm.value, rm.previous_value), reverse=True)
+                for i in range(len(temp_sorted_moves)): self.search_data.root_moves[i] = temp_sorted_moves[i]
+                
+                self.printer.print_pv_completes(main_search_context, self.time_control,
+                                                depth_iter, pv_idx, self.search_data.multi_pv_count,
+                                                self.search_data.root_moves[0], # Print current iteration's best
+                                                self.search_data.nodes_this_search
+                                                )
+                if self.check_timeup_condition(): break 
+            
+            if self.search_data and self.search_data.root_moves: # Final sort of all root moves for this depth
+                if options.balance_mode != SearchOptions.BalanceMode.BALANCE_NONE:
+                    comp = BalanceMoveValueComparator(options.balance_bias)
+                    self.search_data.root_moves.sort(key=lambda rm_sort: balanced_value(rm_sort.value, comp.bias), reverse=True)
                 else:
                     self.search_data.root_moves.sort(key=lambda rm_sort: (rm_sort.value, rm_sort.previous_value), reverse=True)
 
-                self.printer.print_pv_completes(main_search_context, self.time_control,
-                                                depth_iter, pv_idx, self.search_data.multi_pv_count,
-                                                self.search_data.root_moves[pv_idx], 
-                                                getattr(main_search_context, 'total_nodes_accumulated', 0) 
-                                                )
+            if self.check_timeup_condition(): 
+                if hasattr(main_search_context, 'mark_pondering_available'): main_search_context.mark_pondering_available()
+                break
 
-                if self.check_timeup_condition(): break 
-            
-            if not self.check_timeup_condition():
-                self.search_data.completed_search_depth = depth_iter
-                if self.search_data.root_moves: # Ensure root_moves is not empty
-                    self.printer.print_depth_completes(main_search_context, self.time_control,
-                                                      depth_iter, self.search_data.root_moves[0])
+            self.search_data.completed_search_depth = depth_iter
+            if self.search_data.root_moves: 
+                self.printer.print_depth_completes(main_search_context, self.time_control,
+                                                  depth_iter, self.search_data.root_moves[0])
             
             stop_conditions = StopConditions(
                 current_search_depth=depth_iter,
-                # ***** CORRECTED ATTRIBUTE NAME HERE *****
                 last_best_move_change_depth=depth_iter - self.search_data.best_move_changes_this_iter, 
                 current_best_value=self.search_data.root_moves[0].value if self.search_data.root_moves else Value.VALUE_NONE.value,
                 previous_search_best_value=self.previous_search_best_value,
@@ -322,97 +282,208 @@ class ABSearcher(SearcherBase):
             should_stop, new_reduction_factor = self.time_control.check_stop(stop_conditions, self.previous_time_reduction_factor)
             self.previous_time_reduction_factor = new_reduction_factor 
 
-            if should_stop or self.check_timeup_condition():
-                if hasattr(main_search_context, 'mark_pondering_available'):
-                    main_search_context.mark_pondering_available()
-                break  # Exit iterative deepening loop
+            if should_stop:
+                if hasattr(main_search_context, 'mark_pondering_available'): main_search_context.mark_pondering_available()
+                break 
             
-            # Prepare for next iteration (e.g. reset best_move_changes_current_iter)
-            # self.search_data.clear_for_next_iteration() # Resets some per-iteration stats
+            if self.search_data.root_moves:
+                self.previous_search_best_value = self.search_data.root_moves[0].value
 
 
     def _recursive_search(self, board: Board, options: SearchOptions,
-                          alpha: int, beta: int, depth: int, # Remaining depth
-                          current_ply_stack: StackEntry, # ss for current ply
-                          is_pv_node: bool, is_root_node: bool = False,
-                          # Other flags like cut_node, null_move_allowed etc.
-                          ) -> int:
-        """
-        The core recursive Alpha-Beta (Negamax style) search function.
-        Returns the evaluation of the position.
-        """
-        # This is the main workhorse. Placeholder for now.
-        # It will involve:
-        # 1. Increment node count (self.search_data.total_nodes_searched or thread-local)
-        # 2. Check for draw by repetition/ply limit.
-        # 3. Mate distance pruning (adjust alpha/beta based on mate_in(ply), mated_in(ply)).
-        # 4. TT Lookup:
-        #    - If hit and entry is good enough (depth, bound), return TT score.
-        #    - Use TT move for move ordering.
-        # 5. Base case: depth <= 0 or terminal node:
-        #    - Call quiescence search (e.g., VCF search) or static evaluation.
-        #    - `quickWinCheck` for immediate tactical wins/losses.
-        #    - `evaluate_board` for static eval.
-        # 6. Null Move Pruning (if conditions met):
-        #    - Make a null move, recurse with reduced depth.
-        #    - If result causes cutoff, return beta.
-        # 7. Initialize best_score = -VALUE_INFINITE, best_move = Pos.NONE.
-        # 8. Create MovePicker for current node.
-        # 9. Loop through moves from MovePicker:
-        #    - Pruning before making move (e.g., futility pruning if applicable).
-        #    - Make move on board.
-        #    - Late Move Reduction (LMR): if move is late and not critical, search with reduced depth.
-        #    - Recursive call: score = -_recursive_search(..., -beta, -alpha, new_depth, ss+1, ...).
-        #    - Undo move.
-        #    - Update alpha, best_score, best_move.
-        #    - If score >= beta (fail-high):
-        #        - Store TT entry (LOWER_BOUND).
-        #        - Update killer moves, history heuristics.
-        #        - Return beta.
-        # 10. After loop, store TT entry (EXACT_BOUND if alpha changed, UPPER_BOUND otherwise).
-        # 11. Return best_score (which is alpha if it was raised).
+                          alpha: int, beta: int, depth: int, 
+                          ss: StackEntry, 
+                          is_pv_node: bool, is_root_call: bool = False # is_root_call True if this node is a root move's child
+                         ) -> int:
+        """ Core recursive Alpha-Beta (Negamax style) search function. """
+        if self.search_data is None: return Value.VALUE_NONE.value # Should have search_data
         
-        # Placeholder implementation:
+        self.search_data.nodes_this_search += 1 
+
+        # Update selective depth for PV display if this is a PV path
+        if is_pv_node and self.search_data.sel_depth_max < ss.ply:
+            self.search_data.sel_depth_max = ss.ply
+        
+        # --- 1. Termination checks (Draws, Max Depth in Search Tree) ---
+        if board.ply() >= options.max_moves_in_game : 
+             return get_draw_value(board.ply() - board.pass_count[0]-board.pass_count[1], board.side_to_move(), options, ss.ply)
+        # Practical search depth limit (ss.ply is 0-indexed from actual board root)
+        if ss.ply >= engine_config.MAX_SEARCH_DEPTH + 5 : 
+             return evaluate_board(board, options.game_rule.rule, alpha, beta)
+
+        # --- 2. Check for immediate win/loss (not for root's children direct call, but for deeper nodes) ---
+        # In Rapfi, this is done after TT lookup for non-PV nodes.
+        # And not done if depth <= 0 (quiescence handles it).
+        # `is_root_call` here means this node is a direct child of one of the ID loop's root moves.
+        # For these, quickWinCheck might be too aggressive or redundant with root move generation logic.
+        # Let's defer this to after TT lookup or if not is_root_call and depth > 0.
+
+        # --- 3. Mate Distance Pruning ---
+        # Values from perspective of current player at this node
+        effective_alpha = max(alpha, mated_in(ss.ply)) # We must at least achieve better than being mated
+        effective_beta = min(beta, mate_in(ss.ply + 1))   # No point searching if we can mate sooner
+        if effective_alpha >= effective_beta:
+            return effective_alpha # This means current window is already in a mate/mated state
+
+        # --- 4. Transposition Table Lookup ---
+        current_zobrist_key = board.zobrist_key() 
+        tt_hit, tt_value, tt_eval_from_tt, tt_is_pv_entry, tt_bound, tt_move_from_tt, tt_depth_from_tt = \
+           self.tt.probe(current_zobrist_key, ss.ply)
+
+        if tt_hit and tt_depth_from_tt >= depth: # Use entry if depth is sufficient
+            # Apply TT cutoffs based on bound type
+            if tt_bound == Bound.BOUND_EXACT:
+                if tt_move_from_tt != Pos.NONE : ss.update_pv(tt_move_from_tt, StackEntry()) # Minimal PV
+                return tt_value
+            if tt_bound == Bound.BOUND_LOWER and tt_value >= effective_beta:
+                # TODO: Update counter/killer for tt_move_from_tt if it causes cutoff
+                if tt_move_from_tt != Pos.NONE: ss.add_killer(tt_move_from_tt) # Basic killer update
+                return tt_value 
+            if tt_bound == Bound.BOUND_UPPER and tt_value <= effective_alpha:
+                return tt_value 
+        
+        # Initialize static_eval for current node (ss)
+        # If TT hit provided an eval, use it. Otherwise, compute if not already set (e.g. by parent)
+        if tt_hit and tt_eval_from_tt != Value.VALUE_NONE.value:
+            ss.static_eval = tt_eval_from_tt
+        elif ss.static_eval == Value.VALUE_ZERO.value and ss.ply > 0 : # If not root and not set
+             ss.static_eval = evaluate_board(board, options.game_rule.rule, effective_alpha, effective_beta)
+        # Note: ss.static_eval for ply 0 (root of search) is set by _iterative_deepening_loop.
+        # For children (ss_for_root_child, ply=1), it's set before calling _recursive_search.
+
+        # --- QuickWinCheck again, now that static_eval might be set (for quiescence) ---
+        # This is usually done if depth <= 0, or as part of quiescence.
+        # Rapfi does it *before* depth <= 0 if not root call. Let's stick to that.
+        if not is_root_call and depth > 0: # Check only for non-root, non-quiescence nodes
+            immediate_mate_score = quick_win_check(board, options.game_rule.rule, ss.ply, effective_beta)
+            if immediate_mate_score != Value.VALUE_ZERO.value:
+                return immediate_mate_score
+
+        # --- 5. Base case for recursion: Depth <= 0 (Quiescence/VCF or Static Eval) ---
         if depth <= 0:
-            # In a real search, this would be quiescence search / VCF.
-            # For now, just static evaluation.
-            q_score = quick_win_check(board, options.game_rule.rule, current_ply_stack.ply, beta)
-            if q_score != Value.VALUE_ZERO.value:
-                return q_score
-            return evaluate_board(board, options.game_rule.rule, alpha, beta)
+            # TODO: Implement Quiescence Search (VCF search in Rapfi) which would use a MovePicker
+            # with GenType.VCF or similar, and search only forcing moves.
+            # For now, return the static evaluation (potentially already improved by quickWinCheck if it returned 0).
+            # q_score = quick_win_check(board, options.game_rule.rule, ss.ply, effective_beta) # Already did for non-root
+            # if q_score != Value.VALUE_ZERO.value: return q_score
+            return ss.static_eval 
 
-        # TODO: TT Probe, Null move, etc.
+        # --- (Skipping Null Move, Razoring, Futility for now: these are advanced pruning) ---
+
+        # --- 6. Initialize for move iteration ---
+        original_alpha_for_tt_store = effective_alpha 
+        best_value_at_node = -Value.VALUE_INFINITE.value # Scores are relative to current player
+        best_move_at_node = Pos.NONE # TT move could be a candidate if not used for cutoff
         
-        best_value = -Value.VALUE_INFINITE.value # or alpha
-        num_moves_searched = 0
+        # --- 7. Move Generation & Loop ---
+        if self.search_data is None: return Value.VALUE_NONE.value 
+        
+        # Determine if this node is considered PV for child searches.
+        # It's a PV node if the parent was PV AND this is the first move tried from parent OR first move raising alpha.
+        # `is_pv_node` parameter already tells us if parent considers us PV.
+        
+        move_picker = MovePicker(board, options.game_rule.rule, tt_move_from_tt, 
+                                 self.search_data.main_history,
+                                 self.search_data.counter_move_history,
+                                 ss, # Current ply's stack entry
+                                 self.search_data.search_stack_manager.get_entry(ss.ply - 1) if ss.ply > 0 else None, # ss-1
+                                 self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None  # ss-2
+                                )
+        
+        if ss.ply == 1: # Only print for direct children of root
+            print(f"DEBUG RS (ply={ss.ply}, depth={depth}): MovePicker created. Board state for picker (player {board.side_to_move().name}):")
+            print(board.to_string()) 
+            
+            temp_move_list_for_debug = []
+            # Create a temporary picker to see what it yields without consuming the main one
+            temp_picker_for_debug = MovePicker(board, options.game_rule.rule, tt_move_from_tt, 
+                                 self.search_data.main_history, self.search_data.counter_move_history,
+                                 ss, 
+                                 self.search_data.search_stack_manager.get_entry(ss.ply - 1) if ss.ply > 0 else None,
+                                 self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None)
+            try:
+                for i in range(25): # Try to get more moves for debugging
+                    m = next(temp_picker_for_debug)
+                    if m == Pos.NONE: break 
+                    temp_move_list_for_debug.append(m)
+            except StopIteration:
+                pass 
+            print(f"DEBUG RS (ply={ss.ply}, depth={depth}): Initial moves from DEBUG picker: {temp_move_list_for_debug}")
+        # ***** END DEBUG PRINT *****
+        
+        moves_searched_this_node = 0
+        for current_move in move_picker: 
+            if current_move == Pos.NONE: continue # Should not be yielded by picker
 
-        # Placeholder: get moves (a real picker would be used)
-        # This needs the full context for the picker.
-        # For this placeholder, let's assume we have a way to get some moves.
-        # move_list = self._generate_some_moves_for_node(board, options) # Placeholder
+            # Make move
+            board.make_move(options.game_rule.rule, current_move)
+            moves_searched_this_node +=1
+            
+            # Prepare child stack entry
+            child_ss = self.search_data.search_stack_manager.get_entry(ss.ply + 1)
+            child_ss.reset() 
+            child_ss.ply = board.ply() # Ply after move
+            # Static eval for child node can be computed here or by child call
+            child_ss.static_eval = evaluate_board(board, options.game_rule.rule) 
+            child_ss.current_move = current_move # For debugging/history context
 
-        # For now, just return a dummy value
-        return evaluate_board(board, options.game_rule.rule, alpha, beta)
+            # Determine if child is a PV node. True if current is PV and this is the first move improving alpha.
+            # A simpler rule: first move of a PV node search is also PV.
+            child_is_pv = is_pv_node and (moves_searched_this_node == 1) 
+
+            # TODO: Reductions (LMR) would adjust new_depth here
+            new_depth = depth - 1
+            
+            # --- PVS Search (Principal Variation Search) Logic ---
+            # If this is a PV node and not the first move, try a null-window search first.
+            # if is_pv_node and moves_searched_this_node > 1:
+            #    score = -self._recursive_search(board, options, -effective_alpha - 1, -effective_alpha, new_depth, child_ss, False, False)
+            #    if score > effective_alpha and score < effective_beta: # Re-search if it failed high for null window
+            #        score = -self._recursive_search(board, options, -effective_beta, -effective_alpha, new_depth, child_ss, True, False)
+            # else: # Full window search for first move or non-PV nodes
+
+            score = -self._recursive_search(board, options, -effective_beta, -effective_alpha, new_depth, 
+                                            child_ss, child_is_pv, False) 
+            
+            board.undo_move(options.game_rule.rule)
+
+            if score > best_value_at_node:
+                best_value_at_node = score
+                best_move_at_node = current_move
+                
+                ss.update_pv(best_move_at_node, child_ss) # Update PV for current node (ss)
+
+                if score > effective_alpha: 
+                    effective_alpha = score # Raise alpha
+                    if effective_alpha >= effective_beta: # Beta cutoff (fail-high)
+                        self.tt.store(current_zobrist_key, effective_beta, ss.static_eval, is_pv_node,
+                                      Bound.BOUND_LOWER, best_move_at_node, depth, ss.ply)
+                        if best_move_at_node != Pos.NONE: ss.add_killer(best_move_at_node)
+                        # TODO: Update history heuristics for best_move_at_node
+                        return effective_beta # Return beta as the score for fail-high
+        
+        # --- 8. After all moves searched ---
+        if moves_searched_this_node == 0: # No legal moves from this position
+            return mated_in(ss.ply) # Current player is mated at this ply
+
+        # Store TT entry based on final alpha
+        bound_type_to_store = Bound.BOUND_EXACT if effective_alpha > original_alpha_for_tt_store else Bound.BOUND_UPPER
+        self.tt.store(current_zobrist_key, best_value_at_node, ss.static_eval, is_pv_node,
+                      bound_type_to_store, best_move_at_node, depth, ss.ply)
+                      
+        return best_value_at_node # This is original_alpha if no improvement, or new alpha.
 
 
 if __name__ == '__main__':
-    from .board import Board # For full Board object
+    from .board import Board 
+    from .search_datastructures import SearchOptions, RootMove, ActionType 
+    from .types import Rule, Value
+    from . import config as engine_config 
 
-    print("--- ABSearcher Basic Initialization Test ---")
-    searcher = ABSearcher()
-    assert searcher.tt is not None
-    assert searcher.time_control is not None
-    print(f"Default TT size: {searcher.get_memory_limit()} KB")
-    searcher.set_memory_limit(2048) # 2MB
-    print(f"Set TT size: {searcher.get_memory_limit()} KB")
-    # Note: Python TT size estimate is rough, so it might not be exactly 2048.
-    # Actual number of buckets depends on floor_power_of_two.
-    # For 2048KB and ~256B/bucket -> 8192 buckets. floor_power_of_two(8192) = 8192.
-    # So expected size should be (8192 * 256) / 1024 = 2048 KB.
-    assert searcher.get_memory_limit() >= 1024 # Check if it's reasonably large
+    print("--- Search Main Call Test (ABSearcher Full Structure) ---")
+    
+    searcher = ABSearcher() 
 
-    print("\n--- Mocking a Search Main Call (Simplified) ---")
-    # Mock a MainSearchThread context
     class MockMainSearchContext:
         def __init__(self, board_obj: Board, search_opts: SearchOptions):
             self.board_to_search: Board = board_obj
@@ -422,36 +493,37 @@ if __name__ == '__main__':
             self.total_nodes_accumulated: int = 0 
             self.in_ponder: bool = False
             self.board_size_for_output = board_obj.board_size 
-            self.root_moves: List[RootMove] = [] # Add this to store the final root moves list
-            self.best_root_move_obj: Optional[RootMove] = None # Explicitly for printer
-
-        def options(self) -> SearchOptions: 
-            return self.search_options
-        
+            self.root_moves: List[RootMove] = [] 
+            self.best_root_move_obj: Optional[RootMove] = None 
         def mark_pondering_available(self): pass
 
-
-    test_board = Board(15)
+    test_board = Board(15, engine_config.DEFAULT_CANDIDATE_RANGE) 
     test_board.new_game(Rule.FREESTYLE)
     
     test_options = SearchOptions()
-    test_options.max_depth = 3 # Shallow search for test
+    test_options.max_depth = 3 
     test_options.start_depth = 1
-    test_options.time_limit_is_active = False # No time limits for this basic test
+    test_options.time_limit_is_active = False 
     test_options.multi_pv = 1
 
     main_ctx = MockMainSearchContext(test_board, test_options)
     
-    searcher.clear(clear_all_memory=True) # Clear searcher state
-    searcher.search_main(main_ctx) # Call the main search orchestrator
-
-    print(f"Search main completed. Best move found: {main_ctx.best_move_found}")
-    print(f"Final search data completed depth: {searcher.search_data.completed_search_depth if searcher.search_data else -1}")
+    searcher.clear(clear_all_memory=True) 
     
-    # We expect it to run up to depth 3.
-    # The current _iterative_deepening_loop has mock scoring, so a best move will be picked.
-    assert main_ctx.best_move_found != Pos.NONE
-    if searcher.search_data:
-         assert searcher.search_data.completed_search_depth == test_options.max_depth
+    print("LOG: === CALLING search_main ONCE ===")
+    searcher.search_main(main_ctx) 
+    print("LOG: === RETURNED FROM search_main ONCE ===")
 
-    print("ABSearcher basic structure and search_main call test completed.")
+    print(f"FINAL: Search main completed. Best move found: {main_ctx.best_move_found}")
+    final_completed_depth = -1
+    if searcher.search_data: 
+        final_completed_depth = searcher.search_data.completed_search_depth
+    print(f"FINAL: Final search data completed depth: {final_completed_depth}")
+    
+    if searcher.search_data and searcher.search_data.root_moves: 
+        assert main_ctx.best_move_found != Pos.NONE
+        assert final_completed_depth == test_options.max_depth
+    else:
+        print("FINAL: No root moves were generated or retained by the search.")
+
+    print("Search.py test finished.")

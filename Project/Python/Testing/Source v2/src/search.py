@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import List, Optional, TYPE_CHECKING, Any, cast
 import time 
 import math 
+from . import movegen as movegen_module 
+from .movegen import GenType, ScoredMove
 
 from .types import (Value, Rule, Depth, ActionType, GameRule, OpeningRule, Bound, 
                     mate_in, mated_in) # Ensure mate_in, mated_in are imported
@@ -293,185 +295,219 @@ class ABSearcher(SearcherBase):
     def _recursive_search(self, board: Board, options: SearchOptions,
                           alpha: int, beta: int, depth: int, 
                           ss: StackEntry, 
-                          is_pv_node: bool, is_root_call: bool = False # is_root_call True if this node is a root move's child
+                          is_pv_node: bool, is_root_call: bool = False 
                          ) -> int:
-        """ Core recursive Alpha-Beta (Negamax style) search function. """
-        if self.search_data is None: return Value.VALUE_NONE.value # Should have search_data
+        # ... (node count, sel_depth, termination checks, mate distance pruning, TT lookup as before) ...
+        if self.search_data is None: return Value.VALUE_NONE.value
+        self.search_data.nodes_this_search += 1
+        if is_pv_node and self.search_data.sel_depth_max < ss.ply: self.search_data.sel_depth_max = ss.ply
+        if board.ply() >= options.max_moves_in_game: return get_draw_value(board.ply() - board.pass_count[0]-board.pass_count[1], board.side_to_move(), options, ss.ply)
+        if ss.ply >= engine_config.MAX_SEARCH_DEPTH + 5: return evaluate_board(board, options.game_rule.rule, alpha, beta)
         
-        self.search_data.nodes_this_search += 1 
-
-        # Update selective depth for PV display if this is a PV path
-        if is_pv_node and self.search_data.sel_depth_max < ss.ply:
-            self.search_data.sel_depth_max = ss.ply
+        # Check for immediate win/loss (moved before MDP to match Rapfi search.cpp structure more closely for non-root)
+        if not is_root_call:
+            immediate_mate_score = quick_win_check(board, options.game_rule.rule, ss.ply, beta)
+            if immediate_mate_score != Value.VALUE_ZERO.value:
+                return immediate_mate_score
         
-        # --- 1. Termination checks (Draws, Max Depth in Search Tree) ---
-        if board.ply() >= options.max_moves_in_game : 
-             return get_draw_value(board.ply() - board.pass_count[0]-board.pass_count[1], board.side_to_move(), options, ss.ply)
-        # Practical search depth limit (ss.ply is 0-indexed from actual board root)
-        if ss.ply >= engine_config.MAX_SEARCH_DEPTH + 5 : 
-             return evaluate_board(board, options.game_rule.rule, alpha, beta)
-
-        # --- 2. Check for immediate win/loss (not for root's children direct call, but for deeper nodes) ---
-        # In Rapfi, this is done after TT lookup for non-PV nodes.
-        # And not done if depth <= 0 (quiescence handles it).
-        # `is_root_call` here means this node is a direct child of one of the ID loop's root moves.
-        # For these, quickWinCheck might be too aggressive or redundant with root move generation logic.
-        # Let's defer this to after TT lookup or if not is_root_call and depth > 0.
-
-        # --- 3. Mate Distance Pruning ---
-        # Values from perspective of current player at this node
-        effective_alpha = max(alpha, mated_in(ss.ply)) # We must at least achieve better than being mated
-        effective_beta = min(beta, mate_in(ss.ply + 1))   # No point searching if we can mate sooner
+        effective_alpha = max(alpha, mated_in(ss.ply))
+        effective_beta = min(beta, mate_in(ss.ply + 1))
         if effective_alpha >= effective_beta:
-            return effective_alpha # This means current window is already in a mate/mated state
+            return effective_alpha
 
-        # --- 4. Transposition Table Lookup ---
         current_zobrist_key = board.zobrist_key() 
         tt_hit, tt_value, tt_eval_from_tt, tt_is_pv_entry, tt_bound, tt_move_from_tt, tt_depth_from_tt = \
            self.tt.probe(current_zobrist_key, ss.ply)
 
-        if tt_hit and tt_depth_from_tt >= depth: # Use entry if depth is sufficient
-            # Apply TT cutoffs based on bound type
+        if tt_hit and tt_depth_from_tt >= depth:
             if tt_bound == Bound.BOUND_EXACT:
-                if tt_move_from_tt != Pos.NONE : ss.update_pv(tt_move_from_tt, StackEntry()) # Minimal PV
+                if tt_move_from_tt != Pos.NONE : ss.update_pv(tt_move_from_tt, StackEntry()) 
                 return tt_value
             if tt_bound == Bound.BOUND_LOWER and tt_value >= effective_beta:
-                # TODO: Update counter/killer for tt_move_from_tt if it causes cutoff
-                if tt_move_from_tt != Pos.NONE: ss.add_killer(tt_move_from_tt) # Basic killer update
+                if tt_move_from_tt != Pos.NONE: ss.add_killer(tt_move_from_tt)
                 return tt_value 
             if tt_bound == Bound.BOUND_UPPER and tt_value <= effective_alpha:
                 return tt_value 
         
-        # Initialize static_eval for current node (ss)
-        # If TT hit provided an eval, use it. Otherwise, compute if not already set (e.g. by parent)
         if tt_hit and tt_eval_from_tt != Value.VALUE_NONE.value:
             ss.static_eval = tt_eval_from_tt
-        elif ss.static_eval == Value.VALUE_ZERO.value and ss.ply > 0 : # If not root and not set
+        # Else, if static_eval is not set (e.g. for root children, it's set by _iterative_deepening_loop)
+        # For deeper nodes, if not from TT, it should be computed if it's zero.
+        elif ss.static_eval == Value.VALUE_ZERO.value and ss.ply > 0 : 
              ss.static_eval = evaluate_board(board, options.game_rule.rule, effective_alpha, effective_beta)
-        # Note: ss.static_eval for ply 0 (root of search) is set by _iterative_deepening_loop.
-        # For children (ss_for_root_child, ply=1), it's set before calling _recursive_search.
-
-        # --- QuickWinCheck again, now that static_eval might be set (for quiescence) ---
-        # This is usually done if depth <= 0, or as part of quiescence.
-        # Rapfi does it *before* depth <= 0 if not root call. Let's stick to that.
-        if not is_root_call and depth > 0: # Check only for non-root, non-quiescence nodes
-            immediate_mate_score = quick_win_check(board, options.game_rule.rule, ss.ply, effective_beta)
-            if immediate_mate_score != Value.VALUE_ZERO.value:
-                return immediate_mate_score
-
-        # --- 5. Base case for recursion: Depth <= 0 (Quiescence/VCF or Static Eval) ---
+        
+        # --- Base case for recursion: Depth <= 0 -> CALL QUIESCENCE SEARCH ---
         if depth <= 0:
-            # TODO: Implement Quiescence Search (VCF search in Rapfi) which would use a MovePicker
-            # with GenType.VCF or similar, and search only forcing moves.
-            # For now, return the static evaluation (potentially already improved by quickWinCheck if it returned 0).
-            # q_score = quick_win_check(board, options.game_rule.rule, ss.ply, effective_beta) # Already did for non-root
-            # if q_score != Value.VALUE_ZERO.value: return q_score
-            return ss.static_eval 
+            return self._quiescence_search(board, options, effective_alpha, effective_beta, ss)
 
-        # --- (Skipping Null Move, Razoring, Futility for now: these are advanced pruning) ---
+        # ... (Null Move Pruning placeholder) ...
+        # ... (Razoring, Futility Pruning placeholders) ...
 
-        # --- 6. Initialize for move iteration ---
         original_alpha_for_tt_store = effective_alpha 
-        best_value_at_node = -Value.VALUE_INFINITE.value # Scores are relative to current player
-        best_move_at_node = Pos.NONE # TT move could be a candidate if not used for cutoff
+        best_value_at_node = -Value.VALUE_INFINITE.value 
+        best_move_at_node = Pos.NONE
         
-        # --- 7. Move Generation & Loop ---
-        if self.search_data is None: return Value.VALUE_NONE.value 
-        
-        # Determine if this node is considered PV for child searches.
-        # It's a PV node if the parent was PV AND this is the first move tried from parent OR first move raising alpha.
-        # `is_pv_node` parameter already tells us if parent considers us PV.
+        if self.search_data is None: return Value.VALUE_NONE.value # Should be caught earlier
         
         move_picker = MovePicker(board, options.game_rule.rule, tt_move_from_tt, 
-                                 self.search_data.main_history,
-                                 self.search_data.counter_move_history,
-                                 ss, # Current ply's stack entry
-                                 self.search_data.search_stack_manager.get_entry(ss.ply - 1) if ss.ply > 0 else None, # ss-1
-                                 self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None  # ss-2
-                                )
-        
-        if ss.ply == 1: # Only print for direct children of root
-            print(f"DEBUG RS (ply={ss.ply}, depth={depth}): MovePicker created. Board state for picker (player {board.side_to_move().name}):")
-            print(board.to_string()) 
-            
-            temp_move_list_for_debug = []
-            # Create a temporary picker to see what it yields without consuming the main one
-            temp_picker_for_debug = MovePicker(board, options.game_rule.rule, tt_move_from_tt, 
                                  self.search_data.main_history, self.search_data.counter_move_history,
                                  ss, 
                                  self.search_data.search_stack_manager.get_entry(ss.ply - 1) if ss.ply > 0 else None,
-                                 self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None)
-            try:
-                for i in range(25): # Try to get more moves for debugging
-                    m = next(temp_picker_for_debug)
-                    if m == Pos.NONE: break 
-                    temp_move_list_for_debug.append(m)
-            except StopIteration:
-                pass 
-            print(f"DEBUG RS (ply={ss.ply}, depth={depth}): Initial moves from DEBUG picker: {temp_move_list_for_debug}")
-        # ***** END DEBUG PRINT *****
+                                 self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None
+                                )
         
         moves_searched_this_node = 0
         for current_move in move_picker: 
-            if current_move == Pos.NONE: continue # Should not be yielded by picker
+            if current_move == Pos.NONE: continue 
 
-            # Make move
-            board.make_move(options.game_rule.rule, current_move)
+            # Use Board.MoveType.NORMAL for main search moves to update all states including internal eval
+            board.make_move(options.game_rule.rule, current_move, Board.MoveType.NORMAL)
             moves_searched_this_node +=1
             
-            # Prepare child stack entry
             child_ss = self.search_data.search_stack_manager.get_entry(ss.ply + 1)
             child_ss.reset() 
-            child_ss.ply = board.ply() # Ply after move
-            # Static eval for child node can be computed here or by child call
+            child_ss.ply = board.ply() 
+            # The static_eval for child_ss is now set by board.make_move if it updates st.value_black
+            # and if child_ss.static_eval takes it from -board.current_state_info().value_black
+            # Or, it's computed before the recursive call if not updated by make_move's side effects.
+            # For now, let's assume make_move(NORMAL) makes board state (and its eval) ready.
+            # We can pass the eval of the child position directly.
             child_ss.static_eval = evaluate_board(board, options.game_rule.rule) 
-            child_ss.current_move = current_move # For debugging/history context
 
-            # Determine if child is a PV node. True if current is PV and this is the first move improving alpha.
-            # A simpler rule: first move of a PV node search is also PV.
+            child_ss.current_move = current_move 
+            
             child_is_pv = is_pv_node and (moves_searched_this_node == 1) 
-
-            # TODO: Reductions (LMR) would adjust new_depth here
             new_depth = depth - 1
             
-            # --- PVS Search (Principal Variation Search) Logic ---
-            # If this is a PV node and not the first move, try a null-window search first.
-            # if is_pv_node and moves_searched_this_node > 1:
-            #    score = -self._recursive_search(board, options, -effective_alpha - 1, -effective_alpha, new_depth, child_ss, False, False)
-            #    if score > effective_alpha and score < effective_beta: # Re-search if it failed high for null window
-            #        score = -self._recursive_search(board, options, -effective_beta, -effective_alpha, new_depth, child_ss, True, False)
-            # else: # Full window search for first move or non-PV nodes
+            # TODO: LMR, PVS search window logic
 
             score = -self._recursive_search(board, options, -effective_beta, -effective_alpha, new_depth, 
                                             child_ss, child_is_pv, False) 
             
-            board.undo_move(options.game_rule.rule)
+            board.undo_move(options.game_rule.rule, Board.MoveType.NORMAL)
 
             if score > best_value_at_node:
                 best_value_at_node = score
                 best_move_at_node = current_move
-                
-                ss.update_pv(best_move_at_node, child_ss) # Update PV for current node (ss)
+                ss.update_pv(best_move_at_node, child_ss) 
 
                 if score > effective_alpha: 
-                    effective_alpha = score # Raise alpha
-                    if effective_alpha >= effective_beta: # Beta cutoff (fail-high)
+                    effective_alpha = score
+                    if effective_alpha >= effective_beta: 
                         self.tt.store(current_zobrist_key, effective_beta, ss.static_eval, is_pv_node,
                                       Bound.BOUND_LOWER, best_move_at_node, depth, ss.ply)
                         if best_move_at_node != Pos.NONE: ss.add_killer(best_move_at_node)
-                        # TODO: Update history heuristics for best_move_at_node
-                        return effective_beta # Return beta as the score for fail-high
+                        # TODO: History updates
+                        return effective_beta 
         
-        # --- 8. After all moves searched ---
-        if moves_searched_this_node == 0: # No legal moves from this position
-            return mated_in(ss.ply) # Current player is mated at this ply
+        if moves_searched_this_node == 0: 
+            return mated_in(ss.ply) 
 
-        # Store TT entry based on final alpha
         bound_type_to_store = Bound.BOUND_EXACT if effective_alpha > original_alpha_for_tt_store else Bound.BOUND_UPPER
         self.tt.store(current_zobrist_key, best_value_at_node, ss.static_eval, is_pv_node,
                       bound_type_to_store, best_move_at_node, depth, ss.ply)
                       
-        return best_value_at_node # This is original_alpha if no improvement, or new alpha.
+        return best_value_at_node
+    
+    def _quiescence_search(self, board: Board, options: SearchOptions,
+                           alpha: int, beta: int, ss: StackEntry) -> int:
+        if self.search_data is None: return Value.VALUE_NONE.value
+
+        self.search_data.nodes_this_search += 1
+
+        # Update selective depth if this qsearch node is on a PV path
+        # (is_pv_node for qsearch is typically inherited or assumed False unless specific tracking)
+        # For simplicity, let's assume qsearch nodes don't extend the main PV's sel_depth count
+        # or if they do, the is_pv_node status would need to be passed.
+        # Rapfi's vcfsearch updates selDepth. If ss.ttPv is true:
+        if ss.tt_pv and self.search_data.sel_depth_max < ss.ply:
+             self.search_data.sel_depth_max = ss.ply
+
+
+        # Check for immediate terminal state (mate) by quickWinCheck
+        # Note: ply for mate_in/mated_in is current stack ply
+        immediate_mate_score = quick_win_check(board, options.game_rule.rule, ss.ply, beta)
+        if immediate_mate_score != Value.VALUE_ZERO.value:
+            return immediate_mate_score
+
+        # Stand-pat evaluation (evaluate current position without making further moves)
+        # ss.static_eval should have been computed by the caller (_recursive_search before depth <= 0)
+        # or we re-evaluate here if it's not considered reliable enough for q-search entry.
+        # For q-search, we usually start with the static eval of the current node.
+        stand_pat_score = ss.static_eval 
+        # If static_eval wasn't set reliably by caller:
+        # stand_pat_score = evaluate_board(board, options.game_rule.rule, alpha, beta)
+
+
+        if stand_pat_score >= beta:
+            return beta # Fail-high based on static eval (stand-pat)
+        if stand_pat_score > alpha:
+            alpha = stand_pat_score
+
+        # Define GenType for quiescence search moves
+        # Only interested in tactical/forcing moves: Win, VCF, VCT, Defend critical threats
+        qsearch_gen_type = (GenType.WINNING | GenType.VCF | GenType.VCT |
+                            GenType.DEFEND_FIVE | GenType.DEFEND_FOUR | GenType.DEFEND_B4F3)
+        
+        # MovePicker for quiescence moves
+        # No TT move passed to qsearch picker usually, no complex history.
+        # Stack entries for prev moves might be relevant for countermoves in qsearch if allowed.
+        q_move_picker = MovePicker(
+            board, options.game_rule.rule, Pos.NONE, # No TT move for qsearch picker itself
+            self.search_data.main_history, # Can pass main history
+            self.search_data.counter_move_history, # Can pass counter history
+            ss, # Current stack entry
+            self.search_data.search_stack_manager.get_entry(ss.ply - 1) if ss.ply > 0 else None,
+            self.search_data.search_stack_manager.get_entry(ss.ply - 2) if ss.ply > 1 else None
+        )
+        # Override its generation type for the "quiet moves" stage it will eventually reach
+        # This is a bit of a hack. A dedicated QsearchMovePicker would be cleaner.
+        # For now, we rely on MovePicker's early stages (WINNING, DEFEND_*) to pick tactical moves
+        # and hope that if it reaches GENERATE_REMAINING, that `generate_all_moves` called with
+        # `qsearch_gen_type` will only yield tactical ones.
+        # A better way: Have MovePicker accept a primary GenType for its tactical stages.
+        # Or, have a separate move generator for qsearch.
+
+        # Let's use a direct call to movegen for qsearch for simplicity first.
+        # This bypasses the multi-stage MovePicker logic for qsearch.
+        q_moves_list: List[ScoredMove] = movegen_module.generate_all_moves(
+            board, options.game_rule.rule, qsearch_gen_type
+        )
+        # TODO: Score these q_moves for better ordering (e.g., self A5 > self B4 > defend oppo A5)
+        # For now, iterate in generated order.
+
+        best_value_in_qsearch = stand_pat_score # Start with stand-pat
+        # No best_move_at_node needed for qsearch TT store, as qsearch usually doesn't store full PVs
+
+        for scored_move in q_moves_list:
+            current_q_move = scored_move.pos
+            if current_q_move == Pos.NONE: continue
+
+            # Make move
+            board.make_move(options.game_rule.rule, current_q_move, Board.MoveType.NO_EVAL) # Use NO_EVAL for qsearch
+            
+            child_ss_q = self.search_data.search_stack_manager.get_entry(ss.ply + 1)
+            child_ss_q.reset()
+            child_ss_q.ply = board.ply()
+            child_ss_q.static_eval = evaluate_board(board, options.game_rule.rule) # Eval for child state
+
+            # Recursive call to quiescence search. Depth is not decremented in q-search.
+            # Alpha/beta are negated.
+            score = -self._quiescence_search(board, options, -beta, -alpha, child_ss_q)
+            
+            board.undo_move(options.game_rule.rule, Board.MoveType.NO_EVAL)
+
+            if score > best_value_in_qsearch:
+                best_value_in_qsearch = score
+                if score > alpha:
+                    alpha = score
+                    if alpha >= beta: # Beta cutoff
+                        # Q-search can also store to TT, but often with depth 0 or a special q-depth
+                        # self.tt.store(..., bound=Bound.BOUND_LOWER, depth=0, ...)
+                        return beta # Fail high
+
+        # No TT store for UPPER bound from qsearch in this simplified version
+        return best_value_in_qsearch # Or alpha, if alpha was improved
 
 
 if __name__ == '__main__':

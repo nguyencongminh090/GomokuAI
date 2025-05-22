@@ -516,6 +516,7 @@ def get_pcode_from_patterns(p1: Pattern, p2: Pattern, p3: Pattern, p4: Pattern) 
 
 
 # --- Initialization ---
+
 def init_pattern_config():
     """Initializes all pattern configuration LUTs."""
     global PATTERN2X_LUTS, PCODE_LUT, UNIQUE_PCODE_COUNT, DEFENCE_LUTS
@@ -530,6 +531,11 @@ def init_pattern_config():
     _fill_p4scores_luts_in_config() # Populates engine_config.P4SCORES
 
     _fill_defence_luts()     # Sets DEFENCE_LUTS, depends on PATTERN2X_LUTS
+    if hasattr(engine_config, '_populate_heuristic_eval_tables'):
+        # print("DEBUG PATTERN_UTILS: Calling engine_config._populate_heuristic_eval_tables()")
+        engine_config._populate_heuristic_eval_tables() # Call the function in config.py
+    # else:
+        # print("DEBUG PATTERN_UTILS: engine_config._populate_heuristic_eval_tables not found.")
 
 # Call initialization when module is loaded
 init_pattern_config()

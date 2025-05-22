@@ -130,17 +130,16 @@ EVALUATOR_DRAW_RATIO: float = 1.0
 # Or more consistently, table_idx = r.value + (1 if r == Rule.RENJU and c == Color.WHITE else 0)
 # Let's use RULE_NB + 1 = 4 as the size for the first dimension of these tables.
 # Index 0: Freestyle, 1: Standard, 2: Renju (Black perspective), 3: Renju (White perspective)
+
 EVAL_TABLE_DIM1_SIZE = RULE_NB + 1 # Covers Freestyle, Standard, Renju_Black, Renju_White (if needed)
 
-EVALS: List[List[int]] = [[0] * PCODE_NB for _ in range(EVAL_TABLE_DIM1_SIZE)] # Stores Eval (int)
-EVALS_THREAT: List[List[int]] = [[0] * THREAT_NB for _ in range(EVAL_TABLE_DIM1_SIZE)] # Stores Eval (int)
-
-# P4SCORES stores Pattern4Score objects.
-# PCODE_NB is the number of unique compressed pattern codes.
+# Initialize with defaults
+EVALS: List[List[int]] = [[0] * PCODE_NB for _ in range(EVAL_TABLE_DIM1_SIZE)]
+EVALS_THREAT: List[List[int]] = [[0] * THREAT_NB for _ in range(EVAL_TABLE_DIM1_SIZE)]
 P4SCORES: List[List[Pattern4Score]] = [
-    [Pattern4Score() for _ in range(PCODE_NB)] for _ in range(EVAL_TABLE_DIM1_SIZE)
+    [Pattern4Score(Pattern4.NONE, 0, 0) for _ in range(PCODE_NB)] # Initialize with default Pattern4.NONE
+    for _ in range(EVAL_TABLE_DIM1_SIZE)
 ]
-
 
 # General options
 RELOAD_CONFIG_EACH_MOVE: bool = False
@@ -323,6 +322,186 @@ def load_model_from_stream(stream) -> bool:
 def export_model_to_stream(stream):
     """Placeholder for exporting classical eval model to binary stream."""
     print("Warning: export_model_to_stream is not yet implemented.")
+
+# --- NEW SECTION: Manual Population of Evaluation Tables ---
+
+def _populate_heuristic_eval_tables():
+    """
+    Populates EVALS and P4SCORES with simplified heuristic values.
+    This function should be called AFTER pattern_utils.init_pattern_config() has run,
+    because it relies on engine_config.P4SCORES being filled with the correct Pattern4 types
+    by _fill_p4scores_luts_in_config() (which is called by init_pattern_config).
+    """
+    if not P4SCORES or not P4SCORES[0] or P4SCORES[0][0].pattern4 == Pattern4.NONE and P4SCORES[0][0].score_self() == 0 :
+        # This check suggests P4SCORES might not have been fully processed by pattern_utils
+        # (i.e., the Pattern4 enum types are not set yet for each pcode).
+        # This function relies on P4SCORES[idx][pcode].pattern4 being correctly set.
+        # print("Warning: _populate_heuristic_eval_tables called before P4SCORES properly initialized by pattern_utils. Skipping.", file=sys.stderr)
+        # For safety, we can try to call the pattern util init here, though it should be on import.
+        try:
+            from . import pattern_utils # pylint: disable=import-outside-toplevel
+            if not pattern_utils.PCODE_LUT: # If pattern_utils hasn't run its init
+                 pattern_utils.init_pattern_config()
+        except ImportError:
+            pass # Cannot do much if it cannot be imported
+
+    # Define base scores for different Pattern4 types (from perspective of the player making the pattern)
+    # These are heuristic values and can be tuned.
+    # Positive for good patterns, negative for opponent's good patterns seen from our cell.
+    pattern4_base_eval_scores: Dict[Pattern4, int] = {
+        Pattern4.A_FIVE: 10000,        # Making a five
+        Pattern4.B_FLEX4: 5000,         # Making an open four
+        Pattern4.C_BLOCK4_FLEX3: 2000,  # Making a B4+F3
+        Pattern4.D_BLOCK4_PLUS: 1500,   # B4 + (F2 or B3)
+        Pattern4.E_BLOCK4: 1000,        # Making a B4 (closed four)
+        Pattern4.F_FLEX3_2X: 800,       # Double open three
+        Pattern4.G_FLEX3_PLUS: 600,     # F3 + (F2 or B3)
+        Pattern4.H_FLEX3: 500,          # Single open three
+        Pattern4.I_BLOCK3_PLUS: 300,    # B3x2 or B3+F2
+        Pattern4.J_FLEX2_2X: 150,       # Double F2
+        Pattern4.K_BLOCK3: 100,         # Single B3 (closed three)
+        Pattern4.L_FLEX2: 50,           # Single F2
+        Pattern4.FORBID: -500,          # Occupying a forbidden point (bad for black in renju)
+        Pattern4.NONE: 0
+    }
+    
+    # Heuristic scores for P4SCORES (used for move ordering, slightly different scale)
+    pattern4_heuristic_scores_self: Dict[Pattern4, int] = {
+        Pattern4.A_FIVE: 2000, Pattern4.B_FLEX4: 1000, Pattern4.C_BLOCK4_FLEX3: 800,
+        Pattern4.D_BLOCK4_PLUS: 700, Pattern4.E_BLOCK4: 600, Pattern4.F_FLEX3_2X: 500,
+        Pattern4.G_FLEX3_PLUS: 450, Pattern4.H_FLEX3: 400, Pattern4.I_BLOCK3_PLUS: 300,
+        Pattern4.J_FLEX2_2X: 200, Pattern4.K_BLOCK3: 150, Pattern4.L_FLEX2: 100,
+        Pattern4.FORBID: 10, # Forbid itself might be a "good" defensive move sometimes
+        Pattern4.NONE: 0
+    }
+    # Score for opponent if *they* form a pattern at *our* candidate cell
+    pattern4_heuristic_scores_oppo: Dict[Pattern4, int] = {
+        Pattern4.A_FIVE: -1800, Pattern4.B_FLEX4: -900, Pattern4.C_BLOCK4_FLEX3: -700,
+        Pattern4.D_BLOCK4_PLUS: -600, Pattern4.E_BLOCK4: -500, Pattern4.F_FLEX3_2X: -400,
+        Pattern4.G_FLEX3_PLUS: -350, Pattern4.H_FLEX3: -300, Pattern4.I_BLOCK3_PLUS: -200,
+        Pattern4.J_FLEX2_2X: -100, Pattern4.K_BLOCK3: -80, Pattern4.L_FLEX2: -40,
+        Pattern4.FORBID: 0, # No direct opponent score for us occupying their forbid point
+        Pattern4.NONE: 0
+    }
+
+
+    for rule_val in range(RULE_NB): # FS, STD, RENJU
+        for pcode in range(PCODE_NB):
+            # For EVALS table (static evaluation component)
+            # This needs to combine effect for Black and White
+            # get_p4score(rule, color, pcode) returns Pattern4Score which has .pattern4
+            
+            # Eval from Black's perspective at this empty cell:
+            p4_black_at_cell = get_p4score(Rule(rule_val), Color.BLACK, pcode).pattern4
+            p4_white_at_cell = get_p4score(Rule(rule_val), Color.WHITE, pcode).pattern4
+            
+            eval_black_contrib = pattern4_base_eval_scores.get(p4_black_at_cell, 0)
+            eval_white_contrib = pattern4_base_eval_scores.get(p4_white_at_cell, 0)
+
+            # EVALS[table_idx][pcode] stores score from perspective of 'table_idx' player
+            # table_idx 0 (FS), 1 (STD) - perspective is effectively BLACK
+            # table_idx 2 (RenjuBlack) - perspective is BLACK
+            # table_idx 3 (RenjuWhite) - perspective is WHITE
+
+            # For FS and STD (symmetric, effectively Black's view for the table)
+            if Rule(rule_val) == Rule.FREESTYLE or Rule(rule_val) == Rule.STANDARD:
+                idx = table_index(Rule(rule_val), Color.BLACK) # Should be rule_val
+                EVALS[idx][pcode] = eval_black_contrib - eval_white_contrib
+            
+            # For Renju (asymmetric)
+            if Rule(rule_val) == Rule.RENJU:
+                # Renju Black's table (idx 2)
+                idx_rb = table_index(Rule.RENJU, Color.BLACK)
+                # If Black makes p4_black_at_cell, and White would make p4_white_at_cell
+                # Score for Black is black_contrib - white_contrib (benefit - opponent's counter-benefit)
+                # Special handling for FORBID for black in Renju
+                if p4_black_at_cell == Pattern4.FORBID:
+                    eval_black_contrib_renju = pattern4_base_eval_scores.get(Pattern4.FORBID,0)
+                else:
+                    eval_black_contrib_renju = eval_black_contrib
+                EVALS[idx_rb][pcode] = eval_black_contrib_renju - eval_white_contrib
+
+                # Renju White's table (idx 3)
+                idx_rw = table_index(Rule.RENJU, Color.WHITE)
+                # If White makes p4_white_at_cell, and Black would make p4_black_at_cell
+                # Score for White is white_contrib - black_contrib
+                # Black's FORBID is not a penalty *for white's eval* if white plays there
+                EVALS[idx_rw][pcode] = eval_white_contrib - eval_black_contrib
+
+
+            # For P4SCORES (heuristic scores for move ordering)
+            # P4SCORES[table_idx][pcode] stores Pattern4Score object
+            # We need to set _scoreSelf and _scoreOppo in it.
+            # The .pattern4 enum type itself should have been set by pattern_utils._fill_p4scores_luts_in_config
+
+            for color_val in range(SIDE_NB):
+                player_color = Color(color_val)
+                opponent_color = ~player_color
+                
+                current_rule_config_idx = table_index(Rule(rule_val), player_color)
+
+                # Get the Pattern4 this 'player_color' would make at this pcode
+                # This P4SCORES[...][pcode].pattern4 was set by pattern_utils
+                p4_self = P4SCORES[current_rule_config_idx][pcode].pattern4
+                
+                # What Pattern4 would opponent make if player_color doesn't play here?
+                # This is tricky. The pcode represents patterns for *both* players from this empty square.
+                # P4SCORES[table_idx_for_opponent_view][pcode].pattern4 would be opponent's pattern.
+                table_idx_for_opponent_view = table_index(Rule(rule_val), opponent_color)
+                p4_oppo = P4SCORES[table_idx_for_opponent_view][pcode].pattern4
+
+
+                score_s = pattern4_heuristic_scores_self.get(p4_self, 0)
+                score_o = pattern4_heuristic_scores_oppo.get(p4_oppo, 0) # Opponent's threat if we don't play here
+                
+                # Renju specific score adjustment for FORBID for Black
+                if rule_val == Rule.RENJU and player_color == Color.BLACK and p4_self == Pattern4.FORBID:
+                    score_s = pattern4_heuristic_scores_self.get(Pattern4.FORBID, 0) # Usually a deterrent or low score
+                
+                P4SCORES[current_rule_config_idx][pcode].set_score_self(score_s)
+                P4SCORES[current_rule_config_idx][pcode].set_score_oppo(score_o)
+
+
+    # Threat scores (these are more global, not per-pcode)
+    # Example: if opponent has A_FIVE (mask bit 0 set), it's very bad.
+    # EVALS_THREAT[table_idx][mask]
+    # These are highly heuristic. Example:
+    threat_base_scores = {
+        0: -8000,  # oppo_five (mask bit 0)
+        1: 7000,   # self_flex_four (mask bit 1)
+        2: -6000,  # oppo_flex_four (mask bit 2)
+        # ... add more for other threat mask bits ...
+        6: 500,    # self_three (mask bit 6)
+    }
+    for rule_val in range(RULE_NB):
+        for color_val in range(SIDE_NB):
+            player_color = Color(color_val)
+            idx = table_index(Rule(rule_val), player_color)
+            for i in range(THREAT_NB): # i is the threat_mask
+                mask_score = 0
+                for bit_pos, base_score in threat_base_scores.items():
+                    if (i >> bit_pos) & 1: # If this threat bit is set in the mask
+                        # Score sign depends on whether it's self's threat or opponent's threat
+                        # Bit positions in make_threat_mask:
+                        # 0:oppo_five, 1:self_F4, 2:oppo_F4, 3:self_B4+, 4:self_B4
+                        # 5:self_F3+, 6:self_F3, 7:oppo_B4+, 8:oppo_B4, 9:oppo_F3+, 10:oppo_F3
+                        is_self_threat_bit = bit_pos in [1,3,4,5,6]
+                        if is_self_threat_bit:
+                            mask_score += base_score
+                        else: # Opponent's threat bit
+                            mask_score -= base_score # Subtracting a positive base_score if it's an oppo threat bit
+                                                     # Or, if base_score for oppo_five is already negative, add it.
+                                                     # Let's simplify: threat_base_scores are absolute impacts.
+                                                     # If bit means "opponent has X", then score is negative.
+                                                     # If bit means "self has Y", score is positive.
+                            # Redo based on this logic:
+                            # Let threat_base_scores store positive values for pattern strength
+                            # Example: A_FIVE_STRENGTH = 8000, FLEX_FOUR_STRENGTH = 7000 etc.
+                            # Then add/subtract based on whose pattern it is.
+                            # This is complex; current threat_base_scores is already signed based on who made it.
+                            # Bit 0 = oppo_five, score -8000. Bit 1 = self_F4, score +7000.
+                            pass # Already handled by sign of base_score
+                EVALS_THREAT[idx][i] = mask_score
 
 # No Searcher or DBStorage creation functions for now, as they depend on class definitions.
 
